@@ -1,0 +1,312 @@
+---
+title: Multi-Role System
+description: How students, employees, and contractors are managed with support for multiple simultaneous roles
+icon: users
+---
+
+## Overview
+
+The UCC Access Control System supports **multi-role users** — a single person can simultaneously be a student, employee, and/or contractor. This reflects the real-world scenario where students may work part-time for the university or contractors may also be enrolled in academic programs.
+
+<Info>
+Roles are automatically assigned and revoked based on data loaded into role-specific tables. Administrators don't manually manage role assignments.
+</Info>
+
+## Available Roles
+
+The system defines three primary roles:
+
+<CardGroup cols={3}>
+  <Card title="Estudiante" icon="graduation-cap" color="#22C55E">
+    Students enrolled in academic programs
+  </Card>
+  <Card title="Empleado" icon="briefcase" color="#003DA5">
+    University employees with institutional contracts
+  </Card>
+  <Card title="Contratista" icon="handshake" color="#FF6B35">
+    External contractors providing services to the university
+  </Card>
+</CardGroup>
+
+## Multi-Role Architecture
+
+### Database Design
+
+The system uses a **many-to-many relationship** between users and roles:
+
+```sql
+-- Main user table
+Table: usuarios
+  - id (BIGINT, primary key)
+  - id_institucional (VARCHAR, unique)
+  - nombre_completo (TEXT)
+  - acceso (VARCHAR: 'activo' | 'bloqueado')
+  - total_fallas (INT)
+
+-- Role catalog
+Table: roles
+  - id (BIGINT, primary key)
+  - nombre_rol (VARCHAR: 'Estudiante' | 'Empleado' | 'Contratista')
+
+-- Junction table (many-to-many)
+Table: usuario_roles
+  - id_institucional (VARCHAR, FK → usuarios)
+  - rol_id (BIGINT, FK → roles)
+  - UNIQUE constraint on (id_institucional, rol_id)
+
+-- Role-specific information tables
+Table: info_estudiante
+  - id_institucional (VARCHAR, FK → usuarios)
+  - programa_academico (TEXT)
+  - facultad (TEXT)
+  - semestre (INT)
+
+Table: info_empleado
+  - id_institucional (VARCHAR, FK → usuarios)
+  - dependencia (TEXT)
+  - cargo (TEXT)
+  - tipo_contrato (VARCHAR)
+
+Table: info_contratista
+  - id_institucional (VARCHAR, FK → usuarios)
+  - empresa_proveedora (TEXT)
+  - nit_proveedor (VARCHAR)
+  - area_asignada (TEXT)
+```
+
+### Automatic Role Assignment
+
+Roles are **automatically assigned using database triggers** when data is loaded into role-specific tables:
+
+```sql database/supabase/06_triggers_roles.sql
+-- When a record is inserted into info_estudiante:
+CREATE TRIGGER trg_asignar_rol_estudiante
+    AFTER INSERT ON info_estudiante
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_asignar_rol('Estudiante');
+
+-- When a record is deleted from info_estudiante:
+CREATE TRIGGER trg_revocar_rol_estudiante
+    AFTER DELETE ON info_estudiante
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_revocar_rol('Estudiante');
+```
+
+<Note>
+This trigger-based approach means:
+- Academic registration uploads a CSV → Students get the "Estudiante" role automatically
+- HR uploads employee data → Employees get the "Empleado" role automatically
+- Contracts uploads contractor data → Contractors get the "Contratista" role automatically
+</Note>
+
+### Role Assignment Function
+
+The database function that assigns roles:
+
+```sql database/supabase/06_triggers_roles.sql
+CREATE OR REPLACE FUNCTION fn_asignar_rol()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_rol_id BIGINT;
+    v_nombre_rol TEXT := TG_ARGV[0];
+BEGIN
+    -- Look up role ID by name
+    SELECT id INTO v_rol_id
+    FROM roles
+    WHERE nombre_rol = v_nombre_rol;
+
+    IF v_rol_id IS NULL THEN
+        RAISE EXCEPTION 'Rol "%" no encontrado', v_nombre_rol;
+    END IF;
+
+    -- Insert into usuario_roles (prevent duplicates)
+    INSERT INTO usuario_roles (id_institucional, rol_id)
+    VALUES (NEW.id_institucional, v_rol_id)
+    ON CONFLICT ON CONSTRAINT uq_usuario_rol DO NOTHING;
+
+    RETURN NEW;
+END;
+$$;
+```
+
+## Role Display in UI
+
+The frontend dynamically displays role-specific information using the `RoleInfoCard` component:
+
+```jsx src/modules/user-profile/presentation/components/RoleInfoCard.jsx
+const rolConfig = {
+  Estudiante: {
+    icon: '📚',
+    label: 'Información Académica',
+    color: 'text-green-700',
+    fields: (info) => [
+      { icon: '🎓', label: 'Programa', value: info.programa_academico },
+    ],
+  },
+  Empleado: {
+    icon: '💼',
+    label: 'Información Laboral',
+    color: 'text-blue-700',
+    fields: (info) => [
+      { icon: '🏢', label: 'Dependencia', value: info.dependencia },
+      { icon: '👔', label: 'Cargo', value: info.cargo },
+    ],
+  },
+  Contratista: {
+    icon: '🤝',
+    label: 'Información de Contrato',
+    color: 'text-orange-700',
+    fields: (info) => [
+      { icon: '🏭', label: 'Empresa', value: info.empresa_proveedora },
+    ],
+  },
+};
+
+export const RoleInfoCard = ({ rol, info }) => {
+  const config = rolConfig[rol];
+  if (!config || !info) return null;
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100">
+      <div className="flex items-center gap-2 px-4 py-3 bg-gray-50">
+        <span>{config.icon}</span>
+        <h2 className={`text-sm font-bold uppercase ${config.color}`}>
+          {config.label}
+        </h2>
+      </div>
+      <div className="px-4">
+        {config.fields(info).map((field) => (
+          <InfoRow key={field.label} {...field} />
+        ))}
+      </div>
+    </div>
+  );
+};
+```
+
+## Multi-Role Examples
+
+### Example 1: Student + Employee
+
+```
+User: Carlos Andrés Martínez Ruiz
+ID: 80100003
+
+Roles:
+  📚 Estudiante
+     • Programa: Ingeniería de Sistemas
+     • Facultad: Ingeniería
+     • Semestre: 8
+
+  💼 Empleado
+     • Dependencia: Coordinación de Tesorería
+     • Cargo: Asistente Administrativo
+```
+
+### Example 2: Employee + Contractor
+
+```
+User: Laura Milena Vargas Díaz
+ID: 80100006
+
+Roles:
+  💼 Empleado
+     • Dependencia: Tecnología
+     • Cargo: Soporte Técnico
+
+  🤝 Contratista
+     • Empresa: TechSolutions SAS
+     • Área: Mantenimiento IT
+```
+
+## Role Management Workflow
+
+<Steps>
+  <Step title="Data collection">
+    Different university departments prepare their CSV files:
+    - Academic Registration prepares student enrollment data
+    - Human Resources prepares employee data
+    - Contracts department prepares contractor data
+  </Step>
+  <Step title="Semester update">
+    At the start of each semester, departments upload their CSV files to the system.
+  </Step>
+  <Step title="Automatic role sync">
+    Database triggers automatically:
+    - Revoke roles from users no longer in the CSV (e.g., graduated students)
+    - Assign roles to new entries in the CSV (e.g., new hires)
+    - Preserve other roles (multi-role users keep their other active roles)
+  </Step>
+  <Step title="Verification">
+    Administrators can verify role assignments using the admin dashboard.
+  </Step>
+</Steps>
+
+<Warning>
+**Important for semester updates:**
+- Use `DELETE FROM` + `INSERT` to refresh data (triggers fire correctly)
+- DO NOT use `TRUNCATE` (triggers don't fire for truncate operations)
+- Multi-role users only lose roles that are removed from their respective tables
+</Warning>
+
+## Semester Transition Example
+
+**Scenario**: Juan is both a student (semester 10) and an employee.
+
+**Semester 2026-1**:
+- `info_estudiante` has Juan's record → Juan has "Estudiante" role ✓
+- `info_empleado` has Juan's record → Juan has "Empleado" role ✓
+
+**Semester 2026-2**: Juan graduates and doesn't re-enroll
+- New CSV for `info_estudiante` doesn't include Juan
+- `DELETE FROM info_estudiante` removes Juan's record
+- Trigger revokes "Estudiante" role from Juan ✓
+- `info_empleado` still has Juan's record → Juan keeps "Empleado" role ✓
+
+**Result**: Juan loses student access but maintains employee access.
+
+## Role Verification Query
+
+Administrators can verify role assignments with this query:
+
+```sql
+SELECT
+    u.id_institucional,
+    u.nombre_completo,
+    STRING_AGG(r.nombre_rol, ', ' ORDER BY r.nombre_rol) AS roles
+FROM usuarios u
+LEFT JOIN usuario_roles ur ON ur.id_institucional = u.id_institucional
+LEFT JOIN roles r ON r.id = ur.rol_id
+GROUP BY u.id_institucional, u.nombre_completo
+ORDER BY u.id_institucional;
+```
+
+## Benefits of Multi-Role Support
+
+<CardGroup cols={2}>
+  <Card title="Reflects Reality" icon="check">
+    Accurately represents the university's real organizational structure where individuals often have multiple affiliations.
+  </Card>
+  <Card title="Automatic Management" icon="robot">
+    Roles are automatically assigned and revoked based on institutional data, reducing manual administrative work.
+  </Card>
+  <Card title="Data Integrity" icon="shield-check">
+    Database constraints prevent duplicate role assignments and ensure referential integrity.
+  </Card>
+  <Card title="Flexible Access" icon="arrows-split-up-and-left">
+    Users maintain appropriate access levels based on all their active institutional relationships.
+  </Card>
+</CardGroup>
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="User Authentication" icon="key" href="/features/user-authentication">
+    Learn how users authenticate with their institutional ID
+  </Card>
+  <Card title="Failure Tracking" icon="clipboard-list" href="/features/failure-tracking">
+    Understand how failures are tracked across all user roles
+  </Card>
+</CardGroup>

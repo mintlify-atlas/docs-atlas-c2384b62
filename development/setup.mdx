@@ -1,0 +1,234 @@
+---
+title: Development Setup
+description: Complete guide to setting up your local development environment for UCC Control de Acceso
+---
+
+## Overview
+
+This guide walks you through setting up the UCC Control de Acceso development environment on your local machine. The system is a SaaS access control application built with React + Vite and Supabase.
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+<Steps>
+  <Step title="Install Node.js 18+">
+    Download and install Node.js from [nodejs.org](https://nodejs.org/). Verify installation:
+    
+    ```bash
+    node --version  # Should be 18.x or higher
+    npm --version
+    ```
+  </Step>
+
+  <Step title="Install Git">
+    Install Git from [git-scm.com](https://git-scm.com/) if not already installed:
+    
+    ```bash
+    git --version
+    ```
+  </Step>
+</Steps>
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone <repository-url>
+    cd ucc-control-acceso
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    <CodeGroup>
+      ```bash npm
+      npm install
+      ```
+
+      ```bash yarn
+      yarn install
+      ```
+
+      ```bash pnpm
+      pnpm install
+      ```
+    </CodeGroup>
+
+    This will install all required dependencies including:
+    - React 18.2.0 - UI framework
+    - Vite 5.0.8 - Build tool and dev server
+    - Tailwind CSS 3.3.6 - Styling framework
+    - Supabase JS 2.97.0 - Database client
+    - React Router DOM 6.20.0 - Routing
+    - Recharts 3.7.0 - Charts and data visualization
+    - XLSX 0.18.5 - Excel export functionality
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create a `.env` file in the project root:
+    
+    ```bash
+    cp .env.example .env
+    ```
+
+    Edit the `.env` file with your configuration:
+
+    ```bash .env
+    # Supabase Backend URL (for API calls)
+    VITE_API_URL=http://localhost:3000
+
+    # Optional: Environment identifier
+    # VITE_ENVIRONMENT=development
+    ```
+
+    <Note>
+      The `VITE_` prefix is required for Vite to expose environment variables to the client-side code.
+    </Note>
+  </Step>
+
+  <Step title="Start the development server">
+    <CodeGroup>
+      ```bash npm
+      npm run dev
+      ```
+
+      ```bash yarn
+      yarn dev
+      ```
+
+      ```bash pnpm
+      pnpm dev
+      ```
+    </CodeGroup>
+
+    The application will automatically open at `http://localhost:3000`
+
+    <Check>
+      You should see the UCC login screen with the institutional logo and ID input field.
+    </Check>
+  </Step>
+</Steps>
+
+## Development Server Configuration
+
+The Vite development server is configured in `vite.config.js`:
+
+```javascript vite.config.js
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 3000,
+    open: true  // Auto-opens browser
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: true  // Source maps for debugging
+  }
+});
+```
+
+### Key Features
+
+- **Port**: Runs on port 3000 by default
+- **Auto-open**: Browser automatically opens on start
+- **Hot Module Replacement (HMR)**: Instant updates without full page reload
+- **Source Maps**: Enabled for production debugging
+
+## Verify Installation
+
+After starting the dev server, verify everything is working:
+
+<Steps>
+  <Step title="Check the login page">
+    Navigate to `http://localhost:3000` and verify:
+    - UCC logo is displayed
+    - "Ingrese su ID Institucional" message appears
+    - Input field accepts only numbers
+    - "INGRESAR" button is present
+  </Step>
+
+  <Step title="Test with sample ID">
+    If your Supabase database is configured with test data, try logging in with a test institutional ID (e.g., `80123456`).
+  </Step>
+
+  <Step title="Check browser console">
+    Open browser DevTools (F12) and verify there are no console errors.
+  </Step>
+</Steps>
+
+## Project Structure
+
+```
+ucc-control-acceso/
+├── src/
+│   ├── modules/           # Feature modules (Clean Architecture)
+│   │   ├── login/         # Authentication module
+│   │   ├── user-profile/  # User profile module
+│   │   └── admin/         # Admin panel module
+│   ├── shared/            # Shared utilities and clients
+│   │   └── lib/           # Supabase client configuration
+│   ├── assets/            # Static assets (images, logos)
+│   ├── App.jsx            # Main app component
+│   └── index.jsx          # Entry point
+├── public/                # Public static files
+├── database/              # Database SQL scripts
+│   └── supabase/          # Supabase-specific migrations
+├── .env.example           # Environment variables template
+├── package.json           # Dependencies and scripts
+├── vite.config.js         # Vite configuration
+└── tailwind.config.js     # Tailwind CSS configuration
+```
+
+## Available Scripts
+
+The `package.json` defines the following scripts:
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| `dev` | `vite` | Start development server with HMR |
+| `build` | `vite build` | Build for production (outputs to `dist/`) |
+| `preview` | `vite preview` | Preview production build locally |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Frontend Development" icon="paintbrush" href="/development/frontend">
+    Learn about React components, Tailwind CSS, and the module structure
+  </Card>
+  
+  <Card title="Backend Setup" icon="database" href="/development/backend">
+    Configure Supabase connection and database schema
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Port 3000 already in use
+
+If port 3000 is occupied, you can change it in `vite.config.js` or specify a different port:
+
+```bash
+npm run dev -- --port 3001
+```
+
+### Dependencies not installing
+
+Clear npm cache and try again:
+
+```bash
+npm cache clean --force
+rm -rf node_modules package-lock.json
+npm install
+```
+
+### Environment variables not loading
+
+Make sure your `.env` file variables start with `VITE_` prefix. Restart the dev server after changing environment variables.
+
+### Supabase connection errors
+
+Verify your Supabase URL and API key in `src/shared/lib/supabaseClient.js` are correct. See the [Backend Setup](/development/backend) guide for details.

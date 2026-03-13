@@ -1,0 +1,334 @@
+---
+title: Failure Tracking
+description: How the system tracks olvido (forgot) and pérdida (lost) incidents when users don't have their TIC card
+icon: clipboard-list
+---
+
+## Overview
+
+The UCC Access Control System tracks **TIC card failures** — incidents when users cannot present their physical Tarjeta de Identificación Cooperativista (TIC). The system records two types of failures:
+
+- **Olvido** (Forgot): User forgot to bring their TIC card
+- **Pérdida** (Lost): User lost their TIC card
+
+<Note>
+All failures are tracked in the `fallas` table and contribute to the user's `total_fallas` counter, which determines if automatic blocking occurs.
+</Note>
+
+## Failure Types
+
+<CardGroup cols={2}>
+  <Card title="Olvido (Forgot)" icon="brain" color="#F59E0B">
+    User temporarily forgot their TIC card at home or elsewhere. This is the most common type of failure.
+  </Card>
+  <Card title="Pérdida (Lost)" icon="circle-xmark" color="#EF4444">
+    User has lost their TIC card and cannot locate it. This requires obtaining a replacement card.
+  </Card>
+</CardGroup>
+
+## Failure Reporting Flow
+
+When a user logs in without their TIC card:
+
+<Steps>
+  <Step title="Authentication">
+    User enters their institutional ID and is authenticated.
+  </Step>
+  <Step title="Profile display">
+    System displays user information, current roles, and accumulated failures.
+  </Step>
+  <Step title="Failure type selection">
+    User is presented with a modal to select the failure reason:
+    - **Olvidé mi TIC** (I forgot my TIC)
+    - **Perdí mi TIC** (I lost my TIC)
+  </Step>
+  <Step title="Failure registration">
+    System records the failure in the database and updates the user's failure counter.
+  </Step>
+  <Step title="Access decision">
+    System evaluates the failure count and grants or denies access accordingly.
+  </Step>
+</Steps>
+
+## User Interface
+
+The failure reporting modal is implemented in `ReportTICModal.jsx`:
+
+```jsx src/modules/user-profile/presentation/components/ReportTICModal.jsx
+export const ReportTICModal = ({ isOpen, onClose, onConfirm, nombreUsuario }) => {
+  const [selected, setSelected] = useState(null);
+
+  const handleConfirm = () => {
+    if (!selected) return;
+    onConfirm(selected); // 'olvido' or 'perdida'
+    setSelected(null);
+  };
+
+  return (
+    <div className="modal">
+      <h3>Reportar TIC</h3>
+      <p>{nombreUsuario}, seleccioná el motivo del reporte</p>
+
+      <ReportOption
+        id="perdida"
+        selected={selected === 'perdida'}
+        onSelect={setSelected}
+        icon="⚠️"
+        title="Perdí mi TIC"
+        description="Mi TIC se extravió. Esto queda registrado como falla. Al acumular 4 fallas el acceso se bloquea."
+      />
+
+      <ReportOption
+        id="olvido"
+        selected={selected === 'olvido'}
+        onSelect={setSelected}
+        icon="📋"
+        title="Olvidé mi TIC"
+        description="Olvidé mi TIC hoy. Esto queda registrado como falla. Al acumular 4 fallas el acceso se bloquea."
+      />
+
+      <button onClick={handleConfirm}>Confirmar</button>
+    </div>
+  );
+};
+```
+
+## Database Implementation
+
+### Failures Table
+
+The `fallas` table stores all failure incidents:
+
+```sql database/supabase/07_fallas.sql
+CREATE TABLE fallas (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id_institucional VARCHAR(20)  NOT NULL
+                     REFERENCES usuarios(id_institucional) ON DELETE CASCADE,
+    fecha_hora       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    motivo           VARCHAR(10)  NOT NULL
+                     CHECK (motivo IN ('olvido', 'perdida'))
+);
+```
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | BIGINT | Unique failure record ID |
+| `id_institucional` | VARCHAR(20) | User who reported the failure |
+| `fecha_hora` | TIMESTAMPTZ | Timestamp when failure was recorded |
+| `motivo` | VARCHAR(10) | Failure type: `olvido` or `perdida` |
+
+### Automatic Counter Update
+
+When a failure is recorded, a **database trigger** automatically updates the user's failure counter:
+
+```sql database/supabase/07_fallas.sql
+CREATE OR REPLACE FUNCTION fn_actualizar_fallas()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_id_inst   VARCHAR(20);
+    v_total     INT;
+BEGIN
+    -- Get the affected user's ID
+    v_id_inst := CASE WHEN TG_OP = 'DELETE' THEN OLD.id_institucional
+                                             ELSE NEW.id_institucional END;
+
+    -- Count current failures
+    SELECT COUNT(*) INTO v_total
+    FROM fallas
+    WHERE id_institucional = v_id_inst;
+
+    -- Update counter and auto-block if 4+ failures
+    UPDATE usuarios
+    SET total_fallas = v_total,
+        acceso       = CASE WHEN v_total >= 4 THEN 'bloqueado' ELSE acceso END
+    WHERE id_institucional = v_id_inst;
+
+    RETURN NULL;
+END;
+$$;
+
+-- Trigger after INSERT
+CREATE TRIGGER trg_fallas_insert
+    AFTER INSERT ON fallas
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_actualizar_fallas();
+
+-- Trigger after DELETE (for corrections)
+CREATE TRIGGER trg_fallas_delete
+    AFTER DELETE ON fallas
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_actualizar_fallas();
+```
+
+<Info>
+The trigger ensures that `total_fallas` is always accurate and automatically blocks users when they reach 4 failures.
+</Info>
+
+## Failure History Display
+
+Users can see their failure history when they log in. The `FallasHistory` component displays past incidents:
+
+```jsx src/modules/user-profile/presentation/components/FallasHistory.jsx
+export const FallasHistory = ({ fallas = [], totalFallas }) => {
+  if (totalFallas === 0 || fallas.length === 0) return null;
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 bg-gray-50">
+        <div className="flex items-center gap-2">
+          <span>⚠️</span>
+          <h2>Historial de Fallas</h2>
+        </div>
+        <span className={`badge ${
+          totalFallas >= 3 ? 'bg-orange-100' : 'bg-blue-100'
+        }`}>
+          {totalFallas} / 4
+        </span>
+      </div>
+
+      {/* Failure list */}
+      <div className="overflow-y-auto max-h-52">
+        {fallas.map((falla) => (
+          <div key={falla.id} className="flex items-center justify-between px-4 py-3">
+            <div>
+              <p className="text-xs text-gray-500">
+                {formatFecha(falla.fecha_hora)}
+              </p>
+            </div>
+            <MotivoBadge motivo={falla.motivo} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+```
+
+## Frontend Failure Registration
+
+The `useUserProfile` hook handles failure registration:
+
+```javascript src/modules/user-profile/application/hooks/useUserProfile.js
+export const useUserProfile = (idInstitucional) => {
+  const [profileData, setProfileData] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Register a failure and auto-refresh data
+  const reportarFalla = useCallback(async (motivo) => {
+    await repository.registrarFalla(idInstitucional, motivo);
+    setRefreshKey((k) => k + 1); // Trigger data refresh
+  }, [idInstitucional]);
+
+  return { profileData, reportarFalla };
+};
+```
+
+## Failure Statistics
+
+Administrators can view failure statistics in the admin dashboard:
+
+### Last 7 Days Graph
+
+The admin dashboard displays a stacked bar chart showing failures by type:
+
+```jsx src/modules/admin/presentation/components/views/ResumenView.jsx
+<BarChart data={fallas7d}>
+  <Bar dataKey="olvido"  name="Olvido"  fill="#22C55E" stackId="a" />
+  <Bar dataKey="perdida" name="Pérdida" fill="#EF4444" stackId="a" />
+</BarChart>
+```
+
+### User Failure Breakdown
+
+The system categorizes users by failure count:
+
+<CardGroup cols={2}>
+  <Card title="⚫ Sin Fallas" icon="circle" color="#6B7280">
+    Users with 0 failures (no issues)
+  </Card>
+  <Card title="🔵 1 Falla" icon="circle" color="#3B82F6">
+    Users with 1 failure (low risk)
+  </Card>
+  <Card title="🟠 2 Fallas" icon="circle" color="#F59E0B">
+    Users with 2 failures (moderate risk)
+  </Card>
+  <Card title="🟡 3 Fallas" icon="circle" color="#EAB308">
+    Users with 3 failures (high risk - one more triggers blocking)
+  </Card>
+</CardGroup>
+
+## Querying Failure Data
+
+### Get failures for a specific user
+
+```sql
+SELECT 
+    id,
+    fecha_hora,
+    motivo
+FROM fallas
+WHERE id_institucional = '80123456'
+ORDER BY fecha_hora DESC;
+```
+
+### Count failures by type this month
+
+```sql
+SELECT 
+    motivo,
+    COUNT(*) as total
+FROM fallas
+WHERE fecha_hora >= DATE_TRUNC('month', CURRENT_DATE)
+GROUP BY motivo;
+```
+
+### Find users at high risk (3 failures)
+
+```sql
+SELECT 
+    u.id_institucional,
+    u.nombre_completo,
+    u.total_fallas
+FROM usuarios u
+WHERE u.total_fallas = 3
+  AND u.acceso = 'activo'
+ORDER BY u.nombre_completo;
+```
+
+## Failure Correction
+
+If a failure was recorded by mistake, administrators can delete it from the database:
+
+```sql
+-- Delete a specific failure
+DELETE FROM fallas WHERE id = 123;
+
+-- The trigger automatically recalculates total_fallas
+```
+
+<Warning>
+Deleting failures should be done carefully and only by authorized administrators. All administrative actions should be logged in the audit system.
+</Warning>
+
+## Important Business Rules
+
+1. **Both failure types count equally** toward the 4-failure limit
+2. **Failures never expire** — the counter persists until:
+   - An administrator manually unblocks the user (resets to 0)
+   - A new semester begins and data is refreshed
+3. **Automatic blocking** occurs at exactly 4 failures (see [Automatic Blocking](/features/automatic-blocking))
+4. **No retroactive changes** — once a failure is recorded with a timestamp, it cannot be modified (only deleted)
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Automatic Blocking" icon="ban" href="/features/automatic-blocking">
+    Learn how users are automatically blocked at 4 failures
+  </Card>
+  <Card title="Admin Dashboard" icon="chart-line" href="/admin/dashboard">
+    View failure statistics and manage user access
+  </Card>
+</CardGroup>

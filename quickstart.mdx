@@ -1,80 +1,597 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start Guide
+description: Step-by-step guide for students and employees to use UCC Control de Acceso
+icon: "rocket"
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide walks you through the complete user flow of the UCC Control de Acceso system, from initial login to reporting a card failure. The entire process takes less than 2 minutes.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+**Before you start**: This system is only for users who do NOT have their physical TIC (Tarjeta de Identificación Cooperativista) at the time of entry.
+</Note>
+
+## Prerequisites
+
+You'll need:
+
+- Your **Institutional ID** (e.g., 80123456)
+- Access to the system URL (provided by your campus security)
+- A web browser (works on mobile and desktop)
+
+## Step 1: Access the Login Page
+
+Navigate to the UCC Control de Acceso application. You'll see a clean login screen with the UCC logo.
+
+<Note>
+The login page features UCC institutional branding with blue and orange colors.
+</Note>
+
+The login page features:
+- UCC institutional branding (blue and orange colors)
+- Single input field for your institutional ID
+- Clear instructions that this is for contingency access only
+
+## Step 2: Enter Your Institutional ID
+
+<Steps>
+  <Step title="Input your ID">
+    Type your institutional ID in the input field (e.g., `80123456`)
+    
+    ```jsx
+    // The system validates that only numbers are entered
+    inputMode="numeric"
+    pattern="\d*"
+    ```
+    
+    <Note>
+    The field only accepts numeric input for security and validation purposes.
+    </Note>
+  </Step>
+  
+  <Step title="Submit the form">
+    Click the **"INGRESAR"** button to validate your ID
+    
+    The system will:
+    - Verify your ID exists in the database
+    - Retrieve your complete user profile
+    - Check your current access status (active/blocked)
+  </Step>
+</Steps>
+
+### What Happens During Validation
+
+The application makes an API call to validate your institutional ID:
+
+```javascript
+// Validation flow
+POST /api/auth/login
+{
+  "idInstitucional": "80123456"
+}
+
+// Successful response
+{
+  "success": true,
+  "user": {
+    "id": 1,
+    "idInstitucional": "80123456",
+    "documentoIdentidad": "1234567890",
+    "nombreCompleto": "Juan Pérez Gómez",
+    "acceso": "activo",
+    "totalFallas": 2
+  }
+}
+```
+
+<Warning>
+If your ID is not found, you'll see an error message. Contact your campus administration to verify your enrollment status.
+</Warning>
+
+## Step 3: View Your Profile
+
+After successful login, you'll be redirected to your user profile page showing:
+
+### Profile Header
+
+The header displays your key information at a glance:
+
+<CodeGroup>
+```jsx Profile Header Component
+<ProfileHeader user={user} />
+```
+
+```jsx What You'll See
+- Avatar (initials or photo)
+- Full name
+- Access status badge (Active/Blocked)
+- Current program or roles
+- Failure counter (if any)
+```
+</CodeGroup>
+
+<Card title="Profile Components" icon="id-card">
+  **Header Section**
+  - Profile photo or initials circle
+  - Name and ID
+  - Green badge for "Activo" or red badge for "Bloqueado"
+  - Failure indicator showing `X/4 fallas registradas`
+</Card>
+
+### Personal Information Card
+
+This card shows your basic information:
+
+```jsx
+<PersonalInfoCard user={user} />
+```
+
+Displays:
+- **ID Institucional**: Your unique university ID
+- **Documento**: Your national ID (cédula)
+- **Estado**: Current access status
+
+### Role-Specific Information
+
+The system supports multiple roles per user. Each active role displays its own information card:
+
+<Tabs>
+  <Tab title="Student">
+    ```jsx
+    <RoleInfoCard rol="Estudiante" info={info_estudiante} />
+    ```
+    
+    Shows:
+    - 📚 **Programa**: Academic program (e.g., "Ingeniería de Sistemas")
+    - 🏫 **Facultad**: Faculty name
+    - 🏢 **Campus**: Campus location (e.g., "Bogotá")
+    - 📖 **Semestre**: Current semester number
+  </Tab>
+  
+  <Tab title="Employee">
+    ```jsx
+    <RoleInfoCard rol="Empleado" info={info_empleado} />
+    ```
+    
+    Shows:
+    - 💼 **Dependencia**: Department (e.g., "Área Financiera")
+    - 👔 **Cargo**: Job title (e.g., "Coordinador de Tesorería")
+    - 📅 **Tipo de Contrato**: Contract type
+  </Tab>
+  
+  <Tab title="Contractor">
+    ```jsx
+    <RoleInfoCard rol="Contratista" info={info_contratista} />
+    ```
+    
+    Shows:
+    - 🤝 **Empresa**: Contracting company name
+    - 🏭 **NIT**: Company tax ID
+    - 📍 **Área Asignada**: Assigned work area
+  </Tab>
+</Tabs>
+
+<Note>
+**Multi-role users**: If you're both a student and an employee (common for student workers), you'll see information cards for both roles!
+</Note>
+
+### Failure History
+
+If you have previous card failures, you'll see a history section showing:
+
+```jsx
+<FallasHistory 
+  fallas={profileData.fallas} 
+  totalFallas={totalFallasReal} 
+/>
+```
+
+Each entry includes:
+- 📅 Date and time of the failure
+- 📝 Reason (Olvido/Pérdida/Robo)
+- 🏢 Campus where it was registered
+- 👤 Security personnel who registered it
+
+## Step 4: Report Your Card Status
+
+At the bottom of your profile, you'll see a prominent green button:
+
+```jsx
+<button onClick={() => setModalOpen(true)}>
+  ✅ Reportar TIC
+</button>
+```
+
+<Steps>
+  <Step title="Click 'Reportar TIC'">
+    This opens a modal dialog asking you to select the reason for not having your card.
+  </Step>
+  
+  <Step title="Select your reason">
+    Choose one of the two options:
+    
+    <Card title="⚠️ Perdí mi TIC" icon="circle-exclamation">
+      Your card was lost or stolen. 
+      
+      **Result**: Immediate blocking regardless of previous failures.
+    </Card>
+    
+    <Card title="📋 Olvidé mi TIC" icon="clipboard">
+      You forgot your card at home.
+      
+      **Result**: Failure counter increases by 1. Access granted unless this is your 4th failure.
+    </Card>
+  </Step>
+  
+  <Step title="Confirm your selection">
+    Click the **"Confirmar"** button to submit your report.
+  </Step>
+</Steps>
+
+### The Report Modal
+
+The modal component ensures you understand the consequences:
+
+```jsx
+<ReportTICModal
+  isOpen={modalOpen}
+  onClose={() => setModalOpen(false)}
+  onConfirm={handleConfirmReport}
+  nombreUsuario={user.nombre_completo}
+/>
+```
+
+<CodeGroup>
+```jsx Option 1: Lost Card
+<ReportOption
+  id="perdida"
+  icon="⚠️"
+  title="Perdí mi TIC"
+  description="Mi TIC se extravió. Esto queda registrado como falla. 
+               Al acumular 4 fallas el acceso se bloquea."
+  borderColor="border-red-500"
+  selectedBg="bg-red-50"
+/>
+```
+
+```jsx Option 2: Forgot Card
+<ReportOption
+  id="olvido"
+  icon="📋"
+  title="Olvidé mi TIC"
+  description="Olvidé mi TIC hoy. Esto queda registrado como falla. 
+               Al acumular 4 fallas el acceso se bloquea."
+  borderColor="border-blue-500"
+  selectedBg="bg-blue-50"
+/>
+```
+</CodeGroup>
+
+## Step 5: View Result
+
+After submitting your report, you'll see one of these outcomes:
+
+<Tabs>
+  <Tab title="Access Granted (1-3 Failures)">
+    <Card title="✅ INGRESO PERMITIDO" icon="circle-check" color="#22C55E">
+      Your access is granted.
+      
+      **Counter**: 1/4, 2/4, or 3/4 fallas registradas
+      
+      <Warning>
+      If you're at 3/4, you're in the **risk zone**. Make sure to bring your physical card next time to avoid being blocked!
+      </Warning>
+    </Card>
+  </Tab>
+  
+  <Tab title="Access Blocked (4th Failure)">
+    <Card title="🚫 USUARIO BLOQUEADO" icon="ban" color="#EF4444">
+      You have reached 4 failures and are now blocked.
+      
+      **What to do**: Visit the administration office to request an unblock.
+      
+      **What happens next**:
+      - Your `estado_general` changes to `bloqueado`
+      - A record is created in `historial_bloqueos`
+      - You cannot access campus until unblocked by an administrator
+      - When unblocked, your failure counter resets to 0
+    </Card>
+  </Tab>
+  
+  <Tab title="Immediate Block (Lost/Stolen)">
+    <Card title="🚨 BLOQUEO INMEDIATO" icon="triangle-exclamation" color="#EF4444">
+      Reporting a lost or stolen card results in immediate blocking.
+      
+      **Why?** This is a security measure to prevent unauthorized use of your card.
+      
+      **What to do**: 
+      1. Visit the administration office
+      2. Request a new TIC
+      3. Request an unblock from an administrator
+    </Card>
+  </Tab>
+</Tabs>
+
+### Database Changes on Report
+
+When you report a card failure, the following happens in the database:
+
+```sql
+-- For "Olvido" (Forgot)
+-- 1. Insert into Registro_Fallas
+INSERT INTO Registro_Fallas (
+  usuario_id, 
+  fecha_hora, 
+  motivo, 
+  sede_registro,
+  vigilante_registro
+) VALUES (
+  1, 
+  NOW(), 
+  'olvido', 
+  'Bogotá',
+  'Juan Seguridad'
+);
+
+-- 2. Increment failure counter
+UPDATE Usuarios 
+SET total_fallas = total_fallas + 1,
+    updated_at = NOW()
+WHERE id = 1;
+
+-- 3. If total_fallas = 4, block user
+UPDATE Usuarios 
+SET estado_general = 'bloqueado'
+WHERE id = 1 AND total_fallas >= 4;
+
+-- 4. Create block record
+INSERT INTO Historial_Bloqueos (
+  usuario_id,
+  fecha_bloqueo,
+  motivo_bloqueo,
+  estado
+) VALUES (
+  1,
+  NOW(),
+  'limite_fallas',
+  'activo'
+);
+```
+
+## Understanding the Failure System
+
+<Card title="The 4-Failure Rule" icon="chart-line">
+  The system uses a progressive warning system:
+  
+  | Failure Count | Status | Access | Risk Level |
+  |---------------|--------|--------|------------|
+  | 0 | ⚫ Clean | ✅ Yes | None |
+  | 1 | 🔵 First warning | ✅ Yes | Low |
+  | 2 | 🟠 Second warning | ✅ Yes | Medium |
+  | 3 | 🟡 Final warning | ⚠️ Yes | **High** |
+  | 4 | 🔴 Blocked | ❌ No | Blocked |
+</Card>
+
+### Visual Indicators
+
+The system provides clear visual feedback about your status:
+
+```jsx
+{/* Failure badge on profile header */}
+{user.total_fallas > 0 && (
+  <div className={`
+    mt-3 px-4 py-1.5 rounded-full text-xs font-semibold 
+    ${user.total_fallas >= 3
+      ? 'bg-orange-500 text-white'  // Danger zone
+      : 'bg-blue-700 text-blue-100' // Normal
+    }
+  `}>
+    {user.total_fallas}/4 fallas registradas
+  </div>
+)}
+```
+
+## Complete User Flow Example
+
+Let's walk through a real-world scenario:
+
+<Steps>
+  <Step title="María's First Failure">
+    María is a student who forgot her card. She:
+    1. Opens the system and enters her ID: `80234567`
+    2. Sees her profile with 0 failures
+    3. Clicks "Reportar TIC"
+    4. Selects "Olvidé mi TIC"
+    5. Sees "✅ Ingreso Permitido - 1/4 fallas"
+    6. Enters campus
+  </Step>
+  
+  <Step title="Second Time (One Week Later)">
+    María forgot her card again:
+    1. Logs in with ID `80234567`
+    2. Now sees 1 previous failure in history
+    3. Reports "Olvidé mi TIC" again
+    4. Counter increases to 2/4
+    5. Access still granted
+  </Step>
+  
+  <Step title="Third Time - Warning Zone">
+    María's profile now shows:
+    ```jsx
+    <div className="bg-orange-500 text-white">
+      3/4 fallas registradas
+    </div>
+    ```
+    
+    After reporting the third time:
+    - ⚠️ High risk warning displayed
+    - Message: "Una falla más y serás bloqueada"
+    - Access granted but with strong warning
+  </Step>
+  
+  <Step title="Fourth Time - Blocked">
+    María forgot her card a fourth time:
+    1. Reports "Olvidé mi TIC"
+    2. System automatically blocks her
+    3. Status changes from "Activo" to "Bloqueado"
+    4. Red message: "🚫 USUARIO BLOQUEADO"
+    5. Must visit administration office
+  </Step>
+  
+  <Step title="Getting Unblocked">
+    María visits administration:
+    1. Admin searches for her ID
+    2. Admin reviews her failure history
+    3. Admin clicks "Desbloquear Usuario"
+    4. Enters justification note
+    5. María's status returns to "Activo"
+    6. Failure counter resets to 0
+    7. Action recorded in audit log
+  </Step>
+</Steps>
+
+## Mobile Experience
+
+The application is fully responsive and optimized for mobile devices:
+
+<CardGroup cols={2}>
+  <Card title="Mobile-First Design" icon="mobile">
+    - Touch-optimized buttons
+    - Large tap targets
+    - Swipeable interface
+    - Full-screen modals
+  </Card>
+  
+  <Card title="Progressive Web App" icon="wifi">
+    - Install on home screen
+    - Fast loading
+    - Offline capability
+    - Native app feel
+  </Card>
+</CardGroup>
+
+### Mobile Layout Features
+
+```jsx
+// Mobile-optimized container
+<div className="min-h-screen bg-gray-100 flex justify-center">
+  <div className="w-full max-w-md flex flex-col relative">
+    {/* Header with back button */}
+    <button className="absolute top-4 left-4 z-10">
+      ← Volver
+    </button>
+    
+    {/* Scrollable content */}
+    <div className="flex-1 overflow-y-auto px-4 py-5">
+      {/* Profile cards */}
+    </div>
+    
+    {/* Sticky button at bottom */}
+    <div className="sticky bottom-0">
+      <button className="w-full py-4">
+        ✅ Reportar TIC
+      </button>
+    </div>
+  </div>
+</div>
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="My ID is not recognized">
+    **Possible causes**:
+    - ID entered incorrectly (check for typos)
+    - Not enrolled for current semester
+    - Database not updated yet
+    
+    **Solution**: Contact campus administration to verify your enrollment status.
+  </Accordion>
+  
+  <Accordion title="I'm blocked but it's my first time">
+    **Possible causes**:
+    - You may have previous failures from earlier in the semester
+    - You selected "Perdí mi TIC" which causes immediate blocking
+    
+    **Solution**: Check your failure history on your profile. Visit administration if you believe this is an error.
+  </Accordion>
+  
+  <Accordion title="The page won't load">
+    **Possible causes**:
+    - Network connectivity issues
+    - System maintenance
+    - Browser compatibility
+    
+    **Solution**: Try refreshing the page, check your internet connection, or try a different browser.
+  </Accordion>
+  
+  <Accordion title="I accidentally selected the wrong option">
+    **Solution**: Immediately contact the security desk or administration before the report is processed. They can review and correct the entry if caught quickly.
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<Card title="Tips for Avoiding Blocks" icon="lightbulb">
+  1. **Always bring your physical TIC** - This system is only for emergencies
+  2. **Set reminders** - Use your phone to remind you to pack your card
+  3. **Keep a backup** - Consider keeping a photo of your ID on your phone (for reference, not access)
+  4. **Track your failures** - Monitor your failure count in the system
+  5. **Act at 3 failures** - If you reach 3/4, be extra careful as one more will block you
+  6. **Report accurately** - Always select the correct reason (forgot vs. lost/stolen)
+</Card>
+
+## What Happens After Reporting
+
+<Steps>
+  <Step title="Immediate Processing">
+    The system processes your report instantly and updates the database
+  </Step>
+  
+  <Step title="Access Decision">
+    You receive immediate feedback on whether access is granted or denied
+  </Step>
+  
+  <Step title="Security Notification">
+    Security personnel at the gate receive your authorization status
+  </Step>
+  
+  <Step title="Audit Trail">
+    The complete transaction is logged for security and administrative review
+  </Step>
+  
+  <Step title="Profile Update">
+    Your user profile is updated with the new failure count and status
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Admin Guide" icon="user-tie" href="/admin/dashboard">
+    Learn about administrative features if you're an authorized administrator
+  </Card>
+  
+  <Card title="Development Setup" icon="code" href="/development/setup">
+    Technical documentation for developers
+  </Card>
+</CardGroup>
+
+---
+
+## Need Help?
+
+<Card title="Contact Support" icon="headset">
+  **Universidad Cooperativa de Colombia**
+  
+  - 🌐 Web: www.ucc.edu.co
+  - 📧 Email: soporte@ucc.edu.co
+  - 📱 Phone: +57 (1) XXX XXXX
+  
+  For immediate assistance, contact your campus security desk or visit the administration office.
+</Card>
+
+<Note>
+Remember: This system is designed to help you in emergency situations when you don't have your physical card. Always strive to bring your TIC to avoid accumulating failures!
 </Note>

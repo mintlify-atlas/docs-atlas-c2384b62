@@ -1,0 +1,380 @@
+---
+title: 'Gestión de Usuarios'
+description: 'Búsqueda, visualización y control de acceso para usuarios registrados en el sistema'
+icon: 'users-gear'
+---
+
+## Descripción General
+
+La vista de gestión de usuarios permite a los administradores buscar, filtrar y controlar el estado de acceso de todos los usuarios registrados en el sistema UCC Control de Acceso.
+
+<Info>
+Todos los cambios de estado (bloquear/desbloquear) se registran en la tabla de auditoría con información del administrador que realizó la acción.
+</Info>
+
+## Interfaz de Usuarios
+
+La vista de usuarios se compone de:
+
+1. **Barra de búsqueda** - Búsqueda en tiempo real por nombre, ID, rol o información
+2. **Filtros de estado** - Mostrar todos, solo activos o solo bloqueados
+3. **Tabla de usuarios** - Lista completa con información detallada
+4. **Acciones** - Botones para bloquear o desbloquear usuarios
+
+### Implementación del Componente
+
+```jsx title="src/modules/admin/presentation/components/views/EstudiantesView.jsx"
+export const UsuariosView = ({ usuarios, loading, onToggleAcceso }) => {
+  const [busqueda, setBusqueda] = useState('');
+  const [filtroAcceso, setFiltroAcceso] = useState('todos');
+  const [modalUsuario, setModalUsuario] = useState(null);
+
+  const filtrados = usuarios.filter(u => {
+    const coincideBusqueda =
+      u.nombre_completo?.toLowerCase().includes(busqueda.toLowerCase()) ||
+      u.id_institucional?.toLowerCase().includes(busqueda.toLowerCase()) ||
+      u.infoExtra?.toLowerCase().includes(busqueda.toLowerCase()) ||
+      u.roles?.some(r => r.toLowerCase().includes(busqueda.toLowerCase()));
+
+    const coincideAcceso =
+      filtroAcceso === 'todos' || u.acceso === filtroAcceso;
+
+    return coincideBusqueda && coincideAcceso;
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* Búsqueda y filtros */}
+      {/* Tabla de usuarios */}
+    </div>
+  );
+};
+```
+
+## Búsqueda de Usuarios
+
+La búsqueda es **instantánea** y busca en múltiples campos simultáneamente:
+
+<AccordionGroup>
+  <Accordion title="Campos de búsqueda" icon="magnifying-glass">
+    - **Nombre completo**: Búsqueda parcial en el nombre del usuario
+    - **ID institucional**: Búsqueda por código UCC (ej: 80123456)
+    - **Roles**: Busca usuarios por rol (estudiante, empleado, contratista)
+    - **Información adicional**: Programa académico, dependencia o empresa
+  </Accordion>
+</AccordionGroup>
+
+```jsx title="Barra de búsqueda"
+<div className="flex items-center gap-3 bg-white border rounded-xl px-4 py-2.5">
+  <SearchIcon className="w-4 h-4 text-gray-400" />
+  <input
+    type="text"
+    placeholder="Buscar por nombre, ID, rol o información..."
+    value={busqueda}
+    onChange={e => setBusqueda(e.target.value)}
+    className="flex-1 text-sm outline-none"
+  />
+  {busqueda && (
+    <button onClick={() => setBusqueda('')}>✕</button>
+  )}
+</div>
+```
+
+## Filtros de Estado
+
+Los usuarios pueden filtrarse por estado de acceso usando tres opciones:
+
+<Tabs>
+  <Tab title="Todos">
+    Muestra todos los usuarios del sistema sin restricción
+  </Tab>
+  <Tab title="Activos">
+    Solo usuarios con `acceso === 'activo'` - pueden ingresar sin carnet
+  </Tab>
+  <Tab title="Bloqueados">
+    Solo usuarios con `acceso === 'bloqueado'` - acceso denegado
+  </Tab>
+</Tabs>
+
+```jsx title="Selector de filtros"
+<div className="flex gap-1 bg-white border rounded-xl px-2 py-1.5">
+  {['todos', 'activo', 'bloqueado'].map(op => (
+    <button
+      key={op}
+      onClick={() => setFiltroAcceso(op)}
+      className={`px-3 py-1 rounded-lg text-xs font-medium ${
+        filtroAcceso === op
+          ? 'bg-green-700 text-white'
+          : 'text-gray-500 hover:bg-gray-50'
+      }`}
+    >
+      {op === 'todos' ? 'Todos' : op === 'activo' ? 'Activos' : 'Bloqueados'}
+    </button>
+  ))}
+</div>
+```
+
+## Tabla de Usuarios
+
+La tabla muestra información detallada de cada usuario con las siguientes columnas:
+
+| Columna | Descripción | Ejemplo |
+|---------|-------------|---------|
+| **ID** | ID institucional | `80123456` |
+| **Nombre completo** | Nombre del usuario | `Juan Pérez Gómez` |
+| **Rol(es)** | Roles asignados con badges de color | `Estudiante` `Empleado` |
+| **Info** | Información específica del rol | `Ingeniería de Sistemas` |
+| **Fallas** | Contador actual de fallas | `2 / 4` |
+| **Estado** | Estado de acceso | `Activo` o `Bloqueado` |
+| **Acciones** | Botones de control | Bloquear / Desbloquear |
+
+### Visualización de Roles
+
+Los roles se muestran con badges de colores específicos:
+
+```jsx title="Badges de roles"
+const BADGE_ROL = {
+  estudiante:  'bg-blue-100 text-blue-700',
+  empleado:    'bg-purple-100 text-purple-700',
+  contratista: 'bg-orange-100 text-orange-700',
+};
+
+{u.roles.map(r => (
+  <span
+    key={r}
+    className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+      BADGE_ROL[r.toLowerCase()]
+    }`}
+  >
+    {r}
+  </span>
+))}
+```
+
+### Información Específica por Rol
+
+El sistema muestra información contextual según el rol:
+
+<CodeGroup>
+```jsx Estudiante
+{
+  tipo: 'programa',
+  valor: 'Ingeniería de Sistemas',
+  badge: 'bg-blue-50 text-blue-700'
+}
+```
+
+```jsx Empleado
+{
+  tipo: 'dependencia',
+  valor: 'Coordinación de Tesorería',
+  badge: 'bg-purple-50 text-purple-700'
+}
+```
+
+```jsx Contratista
+{
+  tipo: 'empresa',
+  valor: 'Sistemas Avanzados SAS',
+  badge: 'bg-orange-50 text-orange-700'
+}
+```
+</CodeGroup>
+
+## Contador de Fallas
+
+El contador muestra el número de fallas actuales con código de color:
+
+```jsx
+<span className={`font-semibold ${
+  u.total_fallas >= 3 ? 'text-red-500' : 'text-gray-700'
+}`}>
+  {u.total_fallas}
+</span>
+<span className="text-gray-300 text-xs"> / 4</span>
+```
+
+<Warning>
+Los usuarios con 3 o más fallas se muestran en **rojo** como advertencia de que están cerca del límite de bloqueo automático.
+</Warning>
+
+## Bloquear / Desbloquear Usuarios
+
+Los administradores pueden cambiar el estado de acceso de cualquier usuario mediante un modal de confirmación.
+
+### Modal de Confirmación
+
+```jsx title="src/modules/admin/presentation/components/AccesoModal.jsx"
+const AccesoModal = ({ usuario, onConfirmar, onCerrar }) => {
+  const nuevoAcceso = usuario.acceso === 'activo' ? 'bloqueado' : 'activo';
+  
+  return (
+    <div className="modal">
+      <h3>
+        {nuevoAcceso === 'bloqueado' 
+          ? '🔒 Bloquear acceso' 
+          : '🔓 Desbloquear acceso'}
+      </h3>
+      <p>{usuario.nombre_completo}</p>
+      <p className="text-sm">ID: {usuario.id_institucional}</p>
+      
+      <div className="flex gap-2">
+        <button onClick={onCerrar}>Cancelar</button>
+        <button onClick={() => onConfirmar(usuario.id_institucional, nuevoAcceso)}>
+          Confirmar
+        </button>
+      </div>
+    </div>
+  );
+};
+```
+
+### Proceso de Bloqueo
+
+<Steps>
+  <Step title="Administrador hace clic en 'Bloquear'">
+    Se abre el modal de confirmación con los datos del usuario
+  </Step>
+  <Step title="Confirmación de acción">
+    El administrador revisa la información y confirma la acción
+  </Step>
+  <Step title="Actualización en base de datos">
+    El sistema ejecuta `toggleAcceso(id_institucional, 'bloqueado')`
+  </Step>
+  <Step title="Registro de auditoría">
+    Se guarda quién bloqueó, cuándo y el motivo en la tabla de auditoría
+  </Step>
+  <Step title="Actualización de UI">
+    La tabla se actualiza mostrando el nuevo estado sin recargar la página
+  </Step>
+</Steps>
+
+### Proceso de Desbloqueo
+
+<Steps>
+  <Step title="Administrador hace clic en 'Desbloquear'">
+    Se abre el modal de confirmación
+  </Step>
+  <Step title="Confirmación de acción">
+    El administrador confirma el desbloqueo
+  </Step>
+  <Step title="Actualización del estado">
+    `toggleAcceso(id_institucional, 'activo')`
+  </Step>
+  <Step title="Reset del contador de fallas">
+    El sistema reinicia `total_fallas` a 0 automáticamente
+  </Step>
+  <Step title="Auditoría completa">
+    Se registra el desbloqueo con el ID del administrador
+  </Step>
+</Steps>
+
+<Note>
+Al desbloquear un usuario, el contador de fallas se reinicia automáticamente a 0, dándole un "borrón y cuenta nueva".
+</Note>
+
+## Implementación del Toggle de Acceso
+
+```javascript title="useAdminDashboard.js"
+const toggleAcceso = async (id_institucional, nuevoAcceso) => {
+  await repo.toggleAcceso(id_institucional, nuevoAcceso);
+  
+  // Actualización optimista de la UI
+  setUsuarios(prev =>
+    prev.map(u =>
+      u.id_institucional === id_institucional
+        ? { 
+            ...u, 
+            acceso: nuevoAcceso, 
+            total_fallas: nuevoAcceso === 'activo' ? 0 : u.total_fallas 
+          }
+        : u
+    )
+  );
+  
+  // Refrescar estadísticas
+  repo.getStats().then(s => setStats(s)).catch(() => {});
+};
+```
+
+## Botones de Acción
+
+Los botones cambian según el estado actual del usuario:
+
+<Tabs>
+  <Tab title="Usuario Activo">
+    ```jsx
+    <button
+      onClick={() => setModalUsuario(u)}
+      className="border border-red-200 text-red-600 hover:bg-red-50"
+    >
+      <LockIcon className="w-3.5 h-3.5" />
+      Bloquear
+    </button>
+    ```
+  </Tab>
+  <Tab title="Usuario Bloqueado">
+    ```jsx
+    <button
+      onClick={() => setModalUsuario(u)}
+      className="border border-green-200 text-green-700 hover:bg-green-50"
+    >
+      <UnlockIcon className="w-3.5 h-3.5" />
+      Desbloquear
+    </button>
+    ```
+  </Tab>
+</Tabs>
+
+## Rendimiento y Optimización
+
+El componente de usuarios está optimizado para manejar grandes volúmenes de datos:
+
+- **Filtrado en memoria**: La búsqueda y filtros se aplican en el cliente sin llamadas al servidor
+- **Virtualización** (futuro): Para listas con miles de usuarios
+- **Actualización optimista**: Los cambios se reflejan inmediatamente en la UI
+- **Refresco en background**: Los datos se actualizan cada 30 segundos sin bloquear la interfaz
+
+## Casos de Uso Comunes
+
+<AccordionGroup>
+  <Accordion title="Buscar un estudiante específico" icon="user-magnifying-glass">
+    1. Escribe el ID institucional o nombre en la barra de búsqueda
+    2. El sistema filtra instantáneamente la tabla
+    3. Haz clic en el usuario para ver detalles completos
+  </Accordion>
+  
+  <Accordion title="Ver todos los usuarios bloqueados" icon="ban">
+    1. Haz clic en el filtro "Bloqueados"
+    2. La tabla muestra solo usuarios con `acceso === 'bloqueado'`
+    3. Puedes desbloquearlos uno por uno según sea necesario
+  </Accordion>
+  
+  <Accordion title="Bloquear a un usuario manualmente" icon="lock">
+    1. Busca el usuario en la tabla
+    2. Haz clic en el botón "Bloquear"
+    3. Confirma la acción en el modal
+    4. El sistema registra la acción en auditoría
+  </Accordion>
+  
+  <Accordion title="Restablecer acceso después de resolver incidente" icon="unlock">
+    1. Busca el usuario bloqueado
+    2. Haz clic en "Desbloquear"
+    3. Confirma el desbloqueo
+    4. El contador de fallas se reinicia a 0 automáticamente
+  </Accordion>
+</AccordionGroup>
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card title="Dashboard" icon="gauge-high" href="/admin/dashboard">
+    Volver a la vista general del panel administrativo
+  </Card>
+  <Card title="Reportes" icon="file-excel" href="/admin/reports">
+    Genera reportes de usuarios y exporta a Excel
+  </Card>
+  <Card title="Nuevo Semestre" icon="calendar-plus" href="/admin/semester-management">
+    Carga masiva de usuarios por CSV
+  </Card>
+</CardGroup>

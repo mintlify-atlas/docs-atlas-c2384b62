@@ -1,0 +1,256 @@
+---
+title: 'Panel Administrativo'
+description: 'Descripción general del dashboard administrativo, estadísticas en tiempo real y navegación del sistema'
+icon: 'gauge-high'
+---
+
+## Visión General
+
+El panel administrativo de UCC Control de Acceso proporciona una vista completa del estado del sistema, permitiendo a los administradores monitorear el acceso contingente de usuarios en tiempo real y gestionar el control de carnets institucionales.
+
+<Info>
+El dashboard se actualiza automáticamente cada 30 segundos sin afectar la vista actual del usuario.
+</Info>
+
+## Acceso al Panel
+
+Solo **empleados autorizados** registrados en la tabla `administradores` pueden acceder al panel administrativo. El sistema valida los permisos al iniciar sesión.
+
+```javascript title="src/modules/admin/application/hooks/useAdminDashboard.js"
+const INTERVALO_REFRESCO = 30_000; // 30 segundos
+
+export const useAdminDashboard = () => {
+  const [stats, setStats] = useState(null);
+  const [ultimaActualizacion, setUltimaActualizacion] = useState(null);
+  
+  // Refresco silencioso cada 30s — no muestra spinner
+  const refrescoSilencioso = useCallback(async () => {
+    try {
+      const [s, u] = await Promise.all([
+        repo.getStats(),
+        repo.getUsuarios(),
+      ]);
+      setStats(s);
+      setUsuarios(u);
+      setUltimaActualizacion(new Date());
+    } catch {
+      // silencioso — no muestra error
+    }
+  }, []);
+  
+  return { stats, usuarios, loading, error, ultimaActualizacion };
+};
+```
+
+## Estadísticas en Tiempo Real
+
+El dashboard muestra cuatro tarjetas principales con métricas clave del sistema:
+
+<CardGroup cols={2}>
+  <Card title="Total Estudiantes" icon="users">
+    Número total de estudiantes registrados en el sistema actualmente
+  </Card>
+  <Card title="Usuarios Activos" icon="circle-check">
+    Usuarios con acceso permitido (estado: `activo`)
+  </Card>
+  <Card title="Usuarios Bloqueados" icon="ban">
+    Usuarios con acceso restringido (estado: `bloqueado`)
+  </Card>
+  <Card title="Reportes TIC Hoy" icon="triangle-exclamation">
+    Número de ingresos sin carnet reportados en el día actual
+  </Card>
+</CardGroup>
+
+### Implementación de Tarjetas
+
+```jsx title="src/modules/admin/presentation/components/views/ResumenView.jsx"
+<StatCard
+  titulo="Total Estudiantes"
+  valor={stats?.totalEstudiantes}
+  icono={<UsersIcon />}
+  colorIcono="text-green-600"
+  bgIcono="bg-green-50"
+/>
+
+<StatCard
+  titulo="Bloqueados"
+  valor={stats?.bloqueados}
+  icono={<UserMinusIcon />}
+  colorIcono="text-red-500"
+  bgIcono="bg-red-50"
+/>
+```
+
+## Gráficas y Visualizaciones
+
+### 1. Estado de Carnets (Gráfica Donut)
+
+Muestra la proporción de usuarios activos vs. bloqueados en un gráfico circular con anillo central:
+
+```jsx
+const donutData = stats ? [
+  { name: 'Activos',    value: stats.activos    },
+  { name: 'Bloqueados', value: stats.bloqueados },
+] : [];
+
+<PieChart>
+  <Pie
+    data={donutData}
+    innerRadius={60}
+    outerRadius={85}
+    paddingAngle={3}
+    dataKey="value"
+  >
+    <Cell fill="#1B6B3A" /> {/* Verde UCC */}
+    <Cell fill="#EF4444" /> {/* Rojo */}
+  </Pie>
+</PieChart>
+```
+
+<Note>
+La etiqueta central del donut muestra el total de usuarios en el sistema.
+</Note>
+
+### 2. Reportes TIC - Últimos 7 Días
+
+Gráfico de barras que muestra la distribución de fallas (olvido y pérdida) durante la última semana:
+
+```jsx
+<BarChart data={fallas7d}>
+  <Bar dataKey="olvido"  name="Olvido"  fill="#1B6B3A" stackId="a" />
+  <Bar dataKey="perdida" name="Pérdida" fill="#EF4444" stackId="a" />
+</BarChart>
+```
+
+### 3. Estudiantes por Programa
+
+Gráfico de barras horizontales que muestra la distribución de estudiantes por programa académico:
+
+```jsx title="Distribución por programa"
+<BarChart layout="vertical" data={porPrograma}>
+  <YAxis type="category" dataKey="programa" width={120} />
+  <XAxis type="number" allowDecimals={false} />
+  <Bar dataKey="total" name="Estudiantes" fill="#1B6B3A" />
+</BarChart>
+```
+
+## Navegación del Panel
+
+El dashboard incluye una barra lateral (sidebar) con las siguientes secciones:
+
+<Steps>
+  <Step title="Resumen">
+    Vista principal con todas las estadísticas y gráficas en tiempo real
+  </Step>
+  <Step title="Usuarios">
+    Listado completo de usuarios con búsqueda, filtros y gestión de acceso
+  </Step>
+  <Step title="Semestre">
+    Carga masiva de datos por CSV y gestión del nuevo semestre académico
+  </Step>
+  <Step title="Informes">
+    Reportes configurables (diario, semanal, mensual, semestral) exportables a Excel
+  </Step>
+</Steps>
+
+### Implementación de Navegación
+
+```jsx title="src/modules/admin/presentation/pages/AdminPage.jsx"
+const TITULOS = {
+  resumen:  { 
+    titulo: 'Resumen', 
+    subtitulo: 'Universidad Cooperativa de Colombia — Control de Acceso' 
+  },
+  usuarios: { 
+    titulo: 'Usuarios', 
+    subtitulo: 'Listado y estado de todos los usuarios registrados' 
+  },
+  csv: { 
+    titulo: 'Semestre', 
+    subtitulo: 'Inicia un nuevo semestre y carga los CSV de forma guiada' 
+  },
+  informes: { 
+    titulo: 'Informes', 
+    subtitulo: 'Reportes diarios, semanales, mensuales y semestrales' 
+  },
+};
+
+export const AdminPage = () => {
+  const [vista, setVista] = useState('resumen');
+  const { stats, loading, error, ultimaActualizacion } = useAdminDashboard();
+  
+  return (
+    <div className="flex min-h-screen">
+      <AdminSidebar 
+        vistaActual={vista}
+        onCambiarVista={setVista}
+        estadoSistema={estadoSistema}
+      />
+      <main className="flex-1">
+        {vista === 'resumen' && <ResumenView stats={stats} />}
+        {vista === 'usuarios' && <UsuariosView usuarios={usuarios} />}
+        {/* ... otras vistas ... */}
+      </main>
+    </div>
+  );
+};
+```
+
+## Estado del Sistema
+
+El header del dashboard muestra información importante:
+
+- **Última actualización**: Hora del último refresco de datos (formato HH:mm:ss)
+- **Estado del sistema**: "Activo" con el número de estudiantes habilitados
+- **Errores**: Alertas visuales si hay problemas de conexión
+
+```jsx
+{ultimaActualizacion && (
+  <span className="text-xs text-gray-400">
+    Actualizado: {ultimaActualizacion.toLocaleTimeString('es-CO', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })}
+  </span>
+)}
+
+{error && (
+  <span className="text-xs text-red-500 bg-red-50 px-3 py-1.5 rounded-lg">
+    ⚠️ {error}
+  </span>
+)}
+```
+
+## Colores Institucionales
+
+El dashboard utiliza la paleta de colores oficial de la UCC:
+
+<CodeGroup>
+```css Colores Principales
+--ucc-verde-primary: #1B6B3A;   /* Verde institucional */
+--ucc-verde-dark: #1B4332;      /* Verde oscuro */
+--ucc-naranja: #FF6B35;         /* Naranja institucional */
+```
+
+```css Estados del Sistema
+--color-success: #22C55E;        /* Éxito / Activo */
+--color-danger: #EF4444;         /* Error / Bloqueado */
+--color-warning: #F59E0B;        /* Advertencia */
+--color-info: #3B82F6;           /* Información */
+```
+</CodeGroup>
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card title="Gestión de Usuarios" icon="users-gear" href="/admin/user-management">
+    Aprende a buscar, filtrar y gestionar el acceso de usuarios
+  </Card>
+  <Card title="Generar Reportes" icon="file-excel" href="/admin/reports">
+    Exporta datos a Excel con reportes personalizados
+  </Card>
+  <Card title="Nuevo Semestre" icon="calendar-plus" href="/admin/semester-management">
+    Configura y carga datos para un nuevo período académico
+  </Card>
+</CardGroup>

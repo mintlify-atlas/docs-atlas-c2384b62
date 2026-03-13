@@ -1,0 +1,544 @@
+---
+title: "Technology Stack"
+description: "Technologies, libraries, and tools used in UCC Control de Acceso"
+icon: "layer-group"
+---
+
+## Overview
+
+UCC Control de Acceso uses modern, production-ready technologies optimized for performance, developer experience, and maintainability.
+
+<CardGroup cols={2}>
+  <Card title="Frontend" icon="react">
+    React 18 with Vite build tool
+  </Card>
+  <Card title="Backend" icon="database">
+    Supabase (PostgreSQL + APIs)
+  </Card>
+  <Card title="Styling" icon="paintbrush">
+    Tailwind CSS utility-first framework
+  </Card>
+  <Card title="Language" icon="code">
+    JavaScript ES6+ (no TypeScript)
+  </Card>
+</CardGroup>
+
+## Core Technologies
+
+### React 18
+
+**Version**: `^18.2.0`
+
+**Why React?**
+- **Component-based architecture** aligns perfectly with Clean Architecture
+- **Hooks** enable clean separation of UI and business logic
+- **Large ecosystem** with excellent libraries and tooling
+- **Performance** with Virtual DOM and concurrent features
+- **Active community** with extensive documentation
+
+**Key Features Used**:
+- Functional components with hooks
+- React Router for navigation
+- Context API for global state (user session, admin auth)
+- Custom hooks in Application layer (useLogin, useUserProfile, useAdmin)
+
+```jsx
+// Example: Custom hook pattern
+const { validateId, loading, error } = useLogin();
+```
+
+### Vite
+
+**Version**: `^5.0.8`
+
+**Why Vite?**
+- **Lightning-fast HMR** (Hot Module Replacement)
+- **Instant server start** regardless of application size
+- **Optimized builds** with Rollup under the hood
+- **Native ES modules** support
+- **Better developer experience** compared to Create React App
+
+**Configuration**:
+
+```javascript
+// vite.config.js
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 3000,
+    open: true
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: true
+  }
+});
+```
+
+**Scripts**:
+- `npm run dev` - Start development server (port 3000)
+- `npm run build` - Build for production
+- `npm run preview` - Preview production build
+
+### Tailwind CSS
+
+**Version**: `^3.3.6`
+
+**Why Tailwind?**
+- **Utility-first approach** enables rapid development
+- **No CSS file conflicts** with scoped utility classes
+- **Responsive design** built-in with breakpoint modifiers
+- **Custom design system** easily configured
+- **Purge unused styles** for optimal bundle size
+
+**Custom Configuration**:
+
+```javascript
+// tailwind.config.js
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,jsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        // UCC Corporate Colors
+        'ucc-azul': {
+          primary: '#003DA5',  // Official blue
+          dark: '#002870',
+          light: '#4A7BBA',
+        },
+        'ucc-naranja': {
+          primary: '#FF6B35',  // Official orange
+          light: '#FF8C5F',
+          dark: '#E55A2B',
+        }
+      },
+      fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+      }
+    },
+  },
+  plugins: [],
+}
+```
+
+**Usage Examples**:
+
+```jsx
+<button className="bg-ucc-azul-primary hover:bg-ucc-azul-dark text-white px-4 py-2 rounded">
+  Ingresar
+</button>
+
+<div className="bg-ucc-naranja-primary text-white">
+  Advertencia
+</div>
+```
+
+## Backend & Data Layer
+
+### Supabase
+
+**Version**: `@supabase/supabase-js ^2.97.0`
+
+**Why Supabase?**
+- **PostgreSQL database** with full SQL capabilities
+- **Real-time subscriptions** for live data updates
+- **Row Level Security** built-in for data protection
+- **Auto-generated REST API** from database schema
+- **Authentication** with JWT tokens
+- **Storage** for files and documents
+- **Open source** with self-hosting option
+
+**Client Setup**:
+
+```javascript
+// src/shared/lib/supabaseClient.js
+import { createClient } from '@supabase/supabase-js';
+
+const SUPABASE_URL = 'https://zhljlbuwpezwgkpwvkeu.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wmcyhNSE68bZ9fW8v1PsMg_Va7sIKe-';
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+```
+
+**Key Features Used**:
+
+<Tabs>
+  <Tab title="Database Queries">
+    ```javascript
+    // Select with filters
+    const { data, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('id_institucional', '80123456')
+      .single();
+
+    // Insert
+    await supabase
+      .from('registro_fallas')
+      .insert({
+        usuario_id: userId,
+        motivo: 'olvido',
+        fecha_hora: new Date(),
+      });
+
+    // Update
+    await supabase
+      .from('usuarios')
+      .update({ total_fallas: 4, estado_general: 'bloqueado' })
+      .eq('id', userId);
+    ```
+  </Tab>
+
+  <Tab title="Real-time">
+    ```javascript
+    // Subscribe to changes
+    const subscription = supabase
+      .channel('dashboard-updates')
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'usuarios' 
+        }, 
+        (payload) => {
+          console.log('Change detected:', payload);
+          refreshDashboard();
+        }
+      )
+      .subscribe();
+    ```
+  </Tab>
+
+  <Tab title="RPC Functions">
+    ```javascript
+    // Call stored procedure
+    const { data, error } = await supabase
+      .rpc('get_monthly_statistics', {
+        p_month: 3,
+        p_year: 2026
+      });
+    ```
+  </Tab>
+</Tabs>
+
+## Supporting Libraries
+
+### React Router DOM
+
+**Version**: `^6.20.0`
+
+**Purpose**: Client-side routing and navigation
+
+```jsx
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+
+<BrowserRouter>
+  <Routes>
+    <Route path="/" element={<LoginPage />} />
+    <Route path="/user/:id" element={<UserProfilePage />} />
+    <Route path="/admin" element={<AdminDashboard />} />
+  </Routes>
+</BrowserRouter>
+```
+
+**Why React Router?**
+- Industry standard for React routing
+- Declarative routing configuration
+- Nested routes support
+- URL parameters and query strings
+- Navigation hooks (useNavigate, useParams)
+
+### Recharts
+
+**Version**: `^3.7.0`
+
+**Purpose**: Data visualization for admin dashboard
+
+```jsx
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
+
+<BarChart data={statisticsData} width={600} height={400}>
+  <CartesianGrid strokeDasharray="3 3" />
+  <XAxis dataKey="month" />
+  <YAxis />
+  <Tooltip />
+  <Bar dataKey="failures" fill="#FF6B35" />
+</BarChart>
+```
+
+**Why Recharts?**
+- Built specifically for React
+- Composable chart components
+- Responsive by default
+- Customizable with Tailwind
+- Good performance with large datasets
+
+### XLSX (SheetJS)
+
+**Version**: `^0.18.5`
+
+**Purpose**: Excel export functionality
+
+```javascript
+import * as XLSX from 'xlsx';
+
+const exportToExcel = (data, filename) => {
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Report');
+  XLSX.writeFile(workbook, `${filename}.xlsx`);
+};
+```
+
+**Why XLSX?**
+- Industry standard for Excel manipulation
+- Both import and export capabilities
+- Supports .xlsx, .xls, .csv formats
+- Works in browser (no backend needed)
+- Used for monthly reports and data imports
+
+### Axios
+
+**Version**: `^1.6.2`
+
+**Purpose**: HTTP client for API requests (backup to Supabase)
+
+```javascript
+import axios from 'axios';
+
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000',
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+  }
+});
+
+// Request interceptor for JWT
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor for errors
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Redirect to login
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+```
+
+**Why Axios?**
+- Clean API for HTTP requests
+- Automatic JSON transformation
+- Interceptors for auth tokens
+- Request/response transformation
+- Better error handling than fetch
+
+## Development Tools
+
+### PostCSS & Autoprefixer
+
+**Versions**: 
+- PostCSS: `^8.4.32`
+- Autoprefixer: `^10.4.16`
+
+**Purpose**: Process CSS and add vendor prefixes automatically
+
+Required for Tailwind CSS to work properly.
+
+## Project Structure
+
+How technologies map to Clean Architecture layers:
+
+```
+src/
+├── modules/                    # Feature modules
+│   ├── {module}/
+│   │   ├── domain/            # Plain JavaScript (no external deps)
+│   │   ├── infrastructure/    # Supabase, Axios
+│   │   ├── application/       # React Hooks
+│   │   └── presentation/      # React + Tailwind
+│
+├── shared/                     # Shared utilities
+│   ├── components/            # React + Tailwind
+│   └── lib/                   # Supabase client, utilities
+│
+├── assets/                     # Images, logos
+├── App.jsx                     # React Router setup
+├── index.jsx                   # React entry point
+└── index.css                   # Tailwind directives
+```
+
+## Build & Deployment
+
+### Production Build
+
+```bash
+npm run build
+```
+
+**Output**: Optimized static files in `dist/` directory
+
+**Optimizations**:
+- ✅ Minified JavaScript and CSS
+- ✅ Tree-shaking (removes unused code)
+- ✅ Code splitting
+- ✅ Asset optimization
+- ✅ Source maps for debugging
+
+### Deployment Targets
+
+The application can be deployed to any static hosting:
+
+<CardGroup cols={2}>
+  <Card title="Vercel" icon="triangle">
+    Zero-config deployment with automatic HTTPS
+  </Card>
+  <Card title="Netlify" icon="infinity">
+    Continuous deployment from Git
+  </Card>
+  <Card title="AWS S3 + CloudFront" icon="aws">
+    Scalable cloud hosting
+  </Card>
+  <Card title="GitHub Pages" icon="github">
+    Free hosting for public repos
+  </Card>
+</CardGroup>
+
+## Environment Variables
+
+Configuration using Vite's environment variables:
+
+```bash
+# .env.local
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+VITE_API_URL=https://api.yourdomain.com  # Optional backup API
+```
+
+Access in code:
+
+```javascript
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+```
+
+<Warning>
+  Never commit `.env` files to version control. Use `.env.example` for documentation.
+</Warning>
+
+## Browser Support
+
+Based on browserslist configuration in `package.json`:
+
+**Production**:
+- \>0.2% market share
+- Not dead browsers
+- Not Opera Mini
+
+**Development**:
+- Last version of Chrome, Firefox, Safari
+
+## Why No TypeScript?
+
+The project uses JavaScript ES6+ instead of TypeScript based on team requirements:
+
+**Advantages of this choice**:
+- Lower learning curve for team members
+- Faster development without type compilation
+- Clean Architecture provides structure without types
+- JSDoc comments for documentation
+
+**Maintaining Code Quality**:
+- Strict Clean Architecture boundaries
+- Comprehensive JSDoc comments
+- Consistent naming conventions
+- Code reviews and linting
+
+```javascript
+/**
+ * Validates an institutional ID
+ * @param {string} idInstitucional - The ID to validate
+ * @returns {Promise<{success: boolean, user?: User, error?: string}>}
+ */
+async execute(idInstitucional) {
+  // Implementation
+}
+```
+
+## Performance Considerations
+
+### Bundle Size Optimization
+
+- **Tailwind purge**: Removes unused CSS (production builds less than 10KB)
+- **Code splitting**: React Router automatically splits routes
+- **Tree shaking**: Vite removes unused JavaScript
+- **Lazy loading**: Components loaded on demand
+
+### Runtime Performance
+
+- **React 18 features**: Automatic batching, transitions
+- **Supabase connection pooling**: Efficient database queries
+- **Memoization**: React.memo, useMemo, useCallback where needed
+- **Optimistic updates**: UI updates before server confirmation
+
+## Development Workflow
+
+### Local Development
+
+```bash
+# Install dependencies
+npm install
+
+# Start dev server
+npm run dev
+
+# Access at http://localhost:3000
+```
+
+### Hot Module Replacement
+
+Vite provides instant feedback:
+- CSS changes update without page reload
+- Component changes preserve state
+- Near-instant rebuilds
+
+### Code Organization
+
+Following Clean Architecture:
+1. Create feature module directory
+2. Add domain entities and use cases
+3. Implement infrastructure repositories
+4. Build application hooks
+5. Create presentation components
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Clean Architecture" icon="layer-group" href="/development/clean-architecture">
+    Understand how these technologies fit into layers
+  </Card>
+  <Card title="Getting Started" icon="rocket" href="/development/setup">
+    Set up your development environment
+  </Card>
+  <Card title="Frontend Guide" icon="cube" href="/development/frontend">
+    Explore UI components and patterns
+  </Card>
+  <Card title="Backend Guide" icon="code" href="/development/backend">
+    Learn about data access patterns
+  </Card>
+</CardGroup>

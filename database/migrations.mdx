@@ -1,0 +1,575 @@
+---
+title: 'Migrations & Semester Data'
+description: 'How to refresh data each semester, apply schema changes, and manage the database lifecycle'
+icon: 'rotate'
+---
+
+## Overview
+
+The UCC Access Control system follows a **semester-based data lifecycle**:
+
+<Steps>
+  <Step title="Export Current Semester">
+    Before the semester ends, export all data to Excel/CSV for archival
+  </Step>
+  <Step title="Clean Database">
+    Delete all user data (but keep the schema and roles catalog)
+  </Step>
+  <Step title="Load New Semester">
+    Import fresh user data from institutional CSVs
+  </Step>
+</Steps>
+
+<Warning>
+**All failure records are reset each semester.** Users start with `total_fallas = 0` and `acceso = 'activo'` in the new semester.
+</Warning>
+
+---
+
+## Semester Data Refresh
+
+### 1. Mark Current Semester as Inactive
+
+Before starting a new semester, deactivate the current one:
+
+```sql
+-- Find the active semester
+SELECT * FROM semestres WHERE activo = true;
+
+-- Deactivate it
+UPDATE semestres
+SET activo = false
+WHERE activo = true;
+```
+
+### 2. Create New Semester Record
+
+```sql
+INSERT INTO semestres (nombre, fecha_inicio, fecha_fin, activo)
+VALUES ('2026-2', '2026-07-01', '2026-12-15', true);
+```
+
+<Info>
+The unique index `semestres_activo_unico` ensures only one semester can be active at a time.
+</Info>
+
+### 3. Clean User Data
+
+<Warning>
+**Critical:** Use `DELETE FROM` instead of `TRUNCATE`. `DELETE FROM` triggers the role revocation triggers, while `TRUNCATE` bypasses them.
+</Warning>
+
+```sql
+-- Delete all failures (triggers will update total_fallas in usuarios)
+DELETE FROM fallas;
+
+-- Delete role-specific info (triggers will revoke roles automatically)
+DELETE FROM info_estudiante;
+DELETE FROM info_empleado;
+DELETE FROM info_contratista;
+
+-- Delete all users
+DELETE FROM usuarios;
+
+-- Verify everything is clean
+SELECT 'usuarios' AS table, COUNT(*) AS count FROM usuarios
+UNION ALL
+SELECT 'usuario_roles', COUNT(*) FROM usuario_roles
+UNION ALL
+SELECT 'info_estudiante', COUNT(*) FROM info_estudiante
+UNION ALL
+SELECT 'info_empleado', COUNT(*) FROM info_empleado
+UNION ALL
+SELECT 'info_contratista', COUNT(*) FROM info_contratista
+UNION ALL
+SELECT 'fallas', COUNT(*) FROM fallas;
+
+-- Expected result: all counts should be 0
+```
+
+<Check>
+The `roles` table is **not deleted**. It contains static reference data (`Estudiante`, `Empleado`, `Contratista`).
+</Check>
+
+### 4. Load New Users from CSV
+
+#### CSV Format: usuarios
+
+```csv usuarios.csv
+id_institucional,documento_identidad,nombre_completo
+80100001,1001234567,Juan Diego Pérez Gómez
+80100002,1001234568,María Fernanda Rodríguez López
+80100003,1001234569,Carlos Andrés Martínez Ruiz
+```
+
+<Tabs>
+  <Tab title="Supabase Dashboard">
+    1. Go to **Database** → **usuarios** table
+    2. Click **Insert** → **Import data from CSV**
+    3. Upload `usuarios.csv`
+    4. Map columns: `id_institucional` → `id_institucional`, etc.
+    5. Click **Import**
+  </Tab>
+  
+  <Tab title="SQL COPY Command">
+    ```sql
+    COPY usuarios (id_institucional, documento_identidad, nombre_completo)
+    FROM '/path/to/usuarios.csv'
+    DELIMITER ','
+    CSV HEADER;
+    ```
+  </Tab>
+
+  <Tab title="Supabase JS">
+    ```javascript
+    import { createClient } from '@supabase/supabase-js'
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
+
+    // Read CSV file (e.g., using PapaParse)
+    const usuarios = [
+      { id_institucional: '80100001', documento_identidad: '1001234567', nombre_completo: 'Juan Diego Pérez Gómez' },
+      // ... more users
+    ]
+
+    const { data, error } = await supabase
+      .from('usuarios')
+      .insert(usuarios)
+
+    if (error) console.error('Error inserting users:', error)
+    else console.log('Inserted', data.length, 'users')
+    ```
+  </Tab>
+</Tabs>
+
+#### CSV Format: estudiantes
+
+```csv estudiantes.csv
+id_institucional,programa
+80100001,Ingeniería de Sistemas
+80100002,Derecho
+80100003,Ingeniería de Sistemas
+```
+
+<Tip>
+**Automatic role assignment:** When you insert into `info_estudiante`, the trigger `trg_asignar_rol_estudiante` automatically creates a row in `usuario_roles` with `rol_id = 1` (Estudiante).
+</Tip>
+
+Load using the same methods as above (Dashboard, COPY, or Supabase JS).
+
+#### CSV Format: empleados
+
+```csv empleados.csv
+id_institucional,cargo,dependencia
+80100003,Coordinador de Tesorería,Área Financiera
+80100005,Asistente Administrativo,Secretaría Académica
+```
+
+#### CSV Format: contratistas
+
+```csv contratistas.csv
+id_institucional,empresa
+80100004,Aseo Total S.A.S.
+80100006,Sistemas y Redes Ltda
+```
+
+### 5. Verify Data Load
+
+After loading all CSVs, verify that roles were assigned automatically:
+
+```sql
+SELECT
+    u.id_institucional,
+    u.nombre_completo,
+    u.acceso,
+    u.total_fallas,
+    STRING_AGG(r.nombre_rol, ', ' ORDER BY r.nombre_rol) AS roles,
+    ie.programa AS estudiante_programa,
+    emp.cargo AS empleado_cargo,
+    ic.empresa AS contratista_empresa
+FROM usuarios u
+LEFT JOIN usuario_roles ur ON ur.id_institucional = u.id_institucional
+LEFT JOIN roles r ON r.id = ur.rol_id
+LEFT JOIN info_estudiante ie ON ie.id_institucional = u.id_institucional
+LEFT JOIN info_empleado emp ON emp.id_institucional = u.id_institucional
+LEFT JOIN info_contratista ic ON ic.id_institucional = u.id_institucional
+GROUP BY u.id_institucional, u.nombre_completo, u.acceso, u.total_fallas,
+         ie.programa, emp.cargo, ic.empresa
+ORDER BY u.id_institucional;
+```
+
+Expected output:
+
+| id_institucional | nombre_completo | acceso | total_fallas | roles | estudiante_programa | empleado_cargo | contratista_empresa |
+|---|---|---|---|---|---|---|---|
+| 80100001 | Juan Diego Pérez | activo | 0 | Estudiante | Ingeniería de Sistemas | null | null |
+| 80100002 | María Fernanda | activo | 0 | Estudiante | Derecho | null | null |
+| 80100003 | Carlos Andrés | activo | 0 | Empleado, Estudiante | Ingeniería de Sistemas | Coordinador | null |
+
+<Check>
+All users should have `acceso = 'activo'` and `total_fallas = 0` after the refresh.
+</Check>
+
+---
+
+## Schema Migrations
+
+### When to Migrate
+
+You need to apply a schema migration when:
+
+- Adding a new column to an existing table
+- Creating a new table
+- Modifying constraints or indexes
+- Updating triggers or functions
+
+<Note>
+Semester data refreshes (described above) do **not** require schema migrations. They only replace data, not the structure.
+</Note>
+
+### Migration Workflow
+
+<Steps>
+  <Step title="Create Migration File">
+    Create a new SQL file with a timestamp and descriptive name:
+    
+    ```bash
+    # Format: YYYYMMDD_description.sql
+    database/migrations/20260315_add_sede_to_fallas.sql
+    ```
+  </Step>
+
+  <Step title="Write Migration SQL">
+    ```sql 20260315_add_sede_to_fallas.sql
+    -- Add sede (campus) column to fallas table
+    ALTER TABLE fallas
+    ADD COLUMN sede VARCHAR(100);
+
+    -- Create index for faster filtering by sede
+    CREATE INDEX idx_fallas_sede ON fallas (sede);
+
+    -- Add comment
+    COMMENT ON COLUMN fallas.sede IS 'Campus where the failure was registered (Bogotá, Medellín, etc.)';
+    ```
+  </Step>
+
+  <Step title="Test in Development">
+    1. Apply the migration to a test Supabase project
+    2. Verify that:
+       - The column was added
+       - Existing data is not affected
+       - Queries still work
+    3. Test rollback (if needed):
+    ```sql
+    -- Rollback script
+    ALTER TABLE fallas DROP COLUMN sede;
+    DROP INDEX idx_fallas_sede;
+    ```
+  </Step>
+
+  <Step title="Apply to Production">
+    Run the migration in the production Supabase SQL Editor during a maintenance window:
+    
+    ```sql
+    -- Execute the migration file contents
+    ALTER TABLE fallas ADD COLUMN sede VARCHAR(100);
+    CREATE INDEX idx_fallas_sede ON fallas (sede);
+    COMMENT ON COLUMN fallas.sede IS 'Campus where the failure was registered';
+    ```
+  </Step>
+
+  <Step title="Document the Change">
+    Update the table reference documentation to include the new column.
+  </Step>
+</Steps>
+
+### Migration Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Transactions for Complex Migrations">
+    ```sql
+    BEGIN;
+
+    -- Migration steps
+    ALTER TABLE usuarios ADD COLUMN email VARCHAR(255);
+    UPDATE usuarios SET email = correo_institucional || '@ucc.edu.co';
+    ALTER TABLE usuarios ALTER COLUMN email SET NOT NULL;
+
+    COMMIT;  -- Or ROLLBACK; if something went wrong
+    ```
+  </Accordion>
+
+  <Accordion title="Make Migrations Reversible">
+    Always include a rollback script:
+
+    ```sql
+    -- Forward migration: add_email.sql
+    ALTER TABLE usuarios ADD COLUMN email VARCHAR(255);
+
+    -- Rollback: rollback_add_email.sql
+    ALTER TABLE usuarios DROP COLUMN email;
+    ```
+  </Accordion>
+
+  <Accordion title="Test with Real Data Volume">
+    Before applying a migration in production:
+
+    ```sql
+    -- Generate test data to simulate production load
+    INSERT INTO usuarios (id_institucional, documento_identidad, nombre_completo)
+    SELECT
+      'TEST' || generate_series,
+      '9000000' || generate_series,
+      'Test User ' || generate_series
+    FROM generate_series(1, 10000);
+
+    -- Now test the migration
+    ALTER TABLE usuarios ADD COLUMN email VARCHAR(255);
+    -- Measure execution time
+    ```
+  </Accordion>
+
+  <Accordion title="Avoid Downtime with Online Migrations">
+    For non-breaking changes, use:
+
+    ```sql
+    -- Add column as nullable first
+    ALTER TABLE usuarios ADD COLUMN new_field VARCHAR(100);
+
+    -- Backfill data gradually (in batches, outside transaction)
+    UPDATE usuarios SET new_field = some_calculation()
+    WHERE id BETWEEN 1 AND 1000;
+
+    -- Later: make it NOT NULL after all data is backfilled
+    ALTER TABLE usuarios ALTER COLUMN new_field SET NOT NULL;
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Example Migration: Add Sede Field
+
+Let's walk through a complete migration to add a `sede` (campus) field to track where failures occur.
+
+### 1. Create Migration File
+
+```sql database/migrations/20260315_add_sede_to_fallas.sql
+-- ============================================================
+-- Migration: Add sede column to fallas
+-- Date: 2026-03-15
+-- Description: Track which campus the failure was registered at
+-- ============================================================
+
+-- Step 1: Add nullable column (safe, no data required immediately)
+ALTER TABLE fallas
+ADD COLUMN sede VARCHAR(100);
+
+-- Step 2: Create index for filtering
+CREATE INDEX idx_fallas_sede ON fallas (sede);
+
+-- Step 3: Add documentation
+COMMENT ON COLUMN fallas.sede IS 'Campus where the failure was registered (e.g., Bogotá, Medellín, Cali)';
+
+-- Step 4: (Optional) Make it required for new records
+-- We keep it nullable for now to avoid breaking existing records
+-- Later, after backfilling historical data, we can add:
+-- ALTER TABLE fallas ALTER COLUMN sede SET NOT NULL;
+```
+
+### 2. Apply Migration
+
+```sql
+-- Execute in Supabase SQL Editor
+\i database/migrations/20260315_add_sede_to_fallas.sql
+
+-- Or copy-paste the contents directly
+```
+
+### 3. Update Application Code
+
+```typescript app/actions/register-failure.ts
+// Before:
+await supabase.from('fallas').insert({
+  id_institucional: userId,
+  motivo: 'olvido'
+})
+
+// After:
+await supabase.from('fallas').insert({
+  id_institucional: userId,
+  motivo: 'olvido',
+  sede: 'Bogotá'  // New field
+})
+```
+
+### 4. Create Rollback Script
+
+```sql database/migrations/20260315_rollback_add_sede.sql
+-- Rollback: Remove sede column from fallas
+DROP INDEX IF EXISTS idx_fallas_sede;
+ALTER TABLE fallas DROP COLUMN IF EXISTS sede;
+```
+
+---
+
+## Common Migration Patterns
+
+### Add Enum Value
+
+```sql
+-- Before: estado_de_acceso has 'activo' and 'bloqueado'
+-- After: add 'suspendido' state
+
+ALTER TYPE estado_de_acceso ADD VALUE 'suspendido';
+
+-- Note: You cannot remove enum values in PostgreSQL.
+-- If you need to remove one, you must recreate the type.
+```
+
+### Rename Column
+
+```sql
+ALTER TABLE usuarios
+RENAME COLUMN acceso TO estado_acceso;
+
+-- Don't forget to update:
+-- 1. Indexes (they'll keep working)
+-- 2. Triggers (may need updating if they reference the column)
+-- 3. Application code
+```
+
+### Add Foreign Key
+
+```sql
+-- Add a new table referencing usuarios
+CREATE TABLE notificaciones (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  id_institucional VARCHAR(20) NOT NULL
+    REFERENCES usuarios(id_institucional) ON DELETE CASCADE,
+  mensaje TEXT NOT NULL,
+  fecha_envio TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_notif_usuario ON notificaciones (id_institucional);
+```
+
+### Modify Trigger
+
+```sql
+-- Update the failure tracking trigger to also log to an audit table
+
+CREATE OR REPLACE FUNCTION fn_actualizar_fallas()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_id_inst   VARCHAR(20);
+    v_total     INT;
+BEGIN
+    v_id_inst := CASE WHEN TG_OP = 'DELETE' THEN OLD.id_institucional
+                                             ELSE NEW.id_institucional END;
+
+    SELECT COUNT(*) INTO v_total
+    FROM fallas
+    WHERE id_institucional = v_id_inst;
+
+    UPDATE usuarios
+    SET total_fallas = v_total,
+        acceso = CASE WHEN v_total >= 4 THEN 'bloqueado' ELSE acceso END
+    WHERE id_institucional = v_id_inst;
+
+    -- NEW: Log to audit table
+    INSERT INTO auditoria (tabla, accion, registro_id, fecha)
+    VALUES ('fallas', TG_OP, v_id_inst, NOW());
+
+    RETURN NULL;
+END;
+$$;
+
+-- No need to recreate triggers - they reference the function by name
+```
+
+---
+
+## Backup and Recovery
+
+### Export Database Before Migration
+
+```bash
+# Using pg_dump (requires PostgreSQL client tools)
+pg_dump -h db.xxxxxxxxxxxx.supabase.co -U postgres -d postgres > backup_20260315.sql
+
+# Restore from backup
+psql -h db.xxxxxxxxxxxx.supabase.co -U postgres -d postgres < backup_20260315.sql
+```
+
+### Supabase Backup Features
+
+<Card title="Automated Daily Backups" icon="clock">
+  Supabase Pro plans include daily backups retained for 7 days. You can restore to any backup point from the dashboard.
+</Card>
+
+### Manual Export via Dashboard
+
+1. Go to **Database** → **Backups**
+2. Click **Create backup**
+3. Wait for completion (1-5 minutes)
+4. Download the backup file
+
+---
+
+## Testing Migrations
+
+### Test Checklist
+
+Before applying a migration to production:
+
+- [ ] Migration runs without errors on a fresh database
+- [ ] Existing data is preserved correctly
+- [ ] Foreign keys and constraints are maintained
+- [ ] Indexes are created successfully
+- [ ] Triggers still fire correctly
+- [ ] Rollback script works as expected
+- [ ] Application code is updated to use new schema
+- [ ] Performance impact is acceptable (check `EXPLAIN ANALYZE`)
+
+### Test Query Performance
+
+```sql
+-- Before migration: check query plan
+EXPLAIN ANALYZE
+SELECT * FROM fallas
+WHERE id_institucional = '80100001'
+ORDER BY fecha_hora DESC;
+
+-- Apply migration (e.g., add index)
+CREATE INDEX idx_fallas_id_inst_fecha ON fallas (id_institucional, fecha_hora DESC);
+
+-- After migration: verify improvement
+EXPLAIN ANALYZE
+SELECT * FROM fallas
+WHERE id_institucional = '80100001'
+ORDER BY fecha_hora DESC;
+
+-- Look for: "Index Scan" instead of "Seq Scan", lower execution time
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Schema Overview" icon="sitemap" href="/database/schema">
+    Review the complete ER diagram
+  </Card>
+  <Card title="Table Reference" icon="table" href="/database/tables">
+    Detailed column documentation
+  </Card>
+  <Card title="Backend Setup" icon="code" href="/development/backend">
+    How to query the database from code
+  </Card>
+  <Card title="Development Guide" icon="laptop-code" href="/development/setup">
+    Connect Supabase to your app
+  </Card>
+</CardGroup>

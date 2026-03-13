@@ -1,0 +1,208 @@
+---
+title: 'Employees'
+description: 'Employee role and work-related information in the access control system'
+---
+
+## Overview
+
+The **Employee** role is automatically assigned to users who have a record in the `info_empleado` table. Employees are staff members working at Universidad Cooperativa de Colombia in various departments and positions.
+
+<Info>
+The Employee role is managed automatically through database triggers. When a record is added to `info_empleado`, the system automatically assigns the Employee role to that user.
+</Info>
+
+## Database Schema
+
+The `info_empleado` table stores minimal work-related information needed for access control:
+
+```sql
+CREATE TABLE info_empleado (
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id_institucional VARCHAR(20)  NOT NULL UNIQUE,
+    cargo            VARCHAR(150) NOT NULL,
+    dependencia      VARCHAR(150) NOT NULL
+);
+```
+
+### Fields
+
+<ParamField path="id" type="BIGINT">
+  Auto-generated primary key identifier
+</ParamField>
+
+<ParamField path="id_institucional" type="VARCHAR(20)" required>
+  Foreign key reference to `usuarios.id_institucional`. This is the institutional ID assigned by UCC.
+  
+  - Must be unique
+  - References the main users table
+  - Cascading delete: if the user is deleted, the employee info is also deleted
+</ParamField>
+
+<ParamField path="cargo" type="VARCHAR(150)" required>
+  Job title or position of the employee within UCC.
+  
+  Examples:
+  - "Coordinador de Tesorería"
+  - "Asistente Administrativo"
+  - "Docente de Tiempo Completo"
+  - "Director de Programa"
+  - "Analista de Sistemas"
+</ParamField>
+
+<ParamField path="dependencia" type="VARCHAR(150)" required>
+  Department or area where the employee works.
+  
+  Examples:
+  - "Área Financiera"
+  - "Tesorería"
+  - "Admisiones y Registro"
+  - "Facultad de Ingeniería"
+  - "Sistemas y Tecnología"
+</ParamField>
+
+## Design Rationale
+
+<Card title="Work Essentials Only" icon="briefcase">
+The system stores **only the job title and department** — sufficient for security personnel to know where the person works and their role, without storing sensitive employment data.
+</Card>
+
+The original design included additional fields like:
+- Contract type (tipo_contrato)
+- Start date (fecha_ingreso)
+- Salary information
+- Contract terms
+
+However, the actual implementation follows a **privacy-by-design principle**. Contractual and financial details are:
+- Not necessary for access control
+- Sensitive HR information
+- Better kept in dedicated HR systems
+
+## Role Assignment
+
+The Employee role is assigned automatically through triggers defined in `06_triggers_roles.sql`:
+
+1. **When a record is inserted** into `info_empleado`, the trigger assigns the "Empleado" role
+2. **When a record is deleted** from `info_empleado`, the trigger revokes the "Empleado" role
+3. Users can have **multiple roles simultaneously** (e.g., an employee who is also pursuing studies)
+
+## Administrative Privileges
+
+Some employees may also be granted **administrative access** to the system:
+
+<CardGroup cols={3}>
+  <Card title="Director" icon="user-tie">
+    Full system access
+    - Unblock users
+    - Generate reports
+    - Manage data
+  </Card>
+  <Card title="Supervisor" icon="user-shield">
+    Limited administrative access
+    - View reports
+    - Monitor activity
+    - Support operations
+  </Card>
+  <Card title="Security" icon="shield-halved">
+    Operational access
+    - Register entries
+    - View user info
+    - Report incidents
+  </Card>
+</CardGroup>
+
+<Info>
+Administrative permissions are managed separately in the `administradores` table and are independent of the base Employee role.
+</Info>
+
+## Data Management
+
+The `info_empleado` table is updated by Human Resources when there are staffing changes:
+
+<Steps>
+  <Step title="New Hire">
+    HR adds employee record with institutional ID, position, and department
+  </Step>
+  <Step title="Role Auto-Assignment">
+    Database trigger automatically assigns the Employee role
+  </Step>
+  <Step title="Position Changes">
+    HR updates cargo or dependencia when employee changes positions
+  </Step>
+  <Step title="Termination">
+    HR deletes the record, trigger automatically revokes Employee role
+  </Step>
+</Steps>
+
+## Related Tables
+
+- [`usuarios`](/database/tables#usuarios) - Main user table containing basic user information
+- [`usuario_roles`](/database/tables#usuario_roles) - Junction table managing role assignments
+- [`roles`](/database/tables#roles) - Role definitions table
+- Administrative permissions are configured in the [user management](/admin/user-management) system
+
+## Example Queries
+
+### Get all employees
+
+```sql
+SELECT u.id_institucional, u.nombre_completo, e.cargo, e.dependencia
+FROM usuarios u
+JOIN info_empleado e ON u.id_institucional = e.id_institucional
+WHERE u.estado_general = 'activo';
+```
+
+### Get employee info for a specific user
+
+```sql
+SELECT cargo, dependencia
+FROM info_empleado
+WHERE id_institucional = '80123456';
+```
+
+### Count employees by department
+
+```sql
+SELECT dependencia, COUNT(*) as total_empleados
+FROM info_empleado
+GROUP BY dependencia
+ORDER BY total_empleados DESC;
+```
+
+### Find employees in a specific area
+
+```sql
+SELECT u.nombre_completo, e.cargo
+FROM info_empleado e
+JOIN usuarios u ON e.id_institucional = u.id_institucional
+WHERE e.dependencia LIKE '%Financiera%'
+ORDER BY e.cargo;
+```
+
+## Access Control Impact
+
+When an employee attempts entry without their physical ID card:
+
+1. The system displays their **institutional ID** and **full name**
+2. The **Employee** role badge appears
+3. The **position (cargo)** and **department (dependencia)** are shown
+4. Security personnel can verify the person's work area before granting access
+
+<Warning>
+This system is **only used when the employee does NOT have their physical ID card**. Normal entries with valid ID cards are not recorded in this system.
+</Warning>
+
+## Multi-Role Scenarios
+
+Employees can hold multiple roles simultaneously:
+
+```
+Example: María González (ID: 80234567)
+├─ 👔 EMPLOYEE
+│  ├─ Cargo: Docente de Medio Tiempo
+│  └─ Dependencia: Facultad de Administración
+│
+└─ 🎓 STUDENT
+   └─ Programa: Maestría en Educación
+```
+
+This flexibility allows staff members who are also pursuing academic programs to be properly identified in both capacities.

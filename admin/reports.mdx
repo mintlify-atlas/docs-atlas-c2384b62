@@ -1,0 +1,531 @@
+---
+title: 'Reportes y Exportación'
+description: 'Generación de informes por período y exportación de datos a Excel para análisis'
+icon: 'file-excel'
+---
+
+## Descripción General
+
+El módulo de reportes permite a los administradores generar informes detallados del sistema con diferentes períodos de tiempo y exportarlos a archivos Excel (.xlsx) para análisis externo.
+
+<Info>
+Los reportes incluyen múltiples hojas de Excel con información segmentada: resumen general, fallas por día, distribución por programa, dependencia y empresa.
+</Info>
+
+## Tipos de Reportes Disponibles
+
+El sistema ofrece cuatro tipos de reportes según el período de análisis:
+
+<CardGroup cols={2}>
+  <Card title="Diario" icon="calendar-day">
+    Reporte de un día específico con datos de accesos y fallas
+  </Card>
+  <Card title="Semanal" icon="calendar-week">
+    Datos de lunes a domingo de la semana actual o pasadas
+  </Card>
+  <Card title="Mensual" icon="calendar">
+    Estadísticas completas del mes actual o meses anteriores
+  </Card>
+  <Card title="Semestral" icon="calendar-range">
+    Reporte completo del semestre académico en curso
+  </Card>
+</CardGroup>
+
+## Interfaz de Reportes
+
+### Selector de Período
+
+```jsx title="src/modules/admin/presentation/components/views/ReportesView.jsx"
+const PERIODOS = [
+  { id: 'diario',     label: 'Diario'     },
+  { id: 'semanal',    label: 'Semanal'    },
+  { id: 'mensual',    label: 'Mensual'    },
+  { id: 'semestral',  label: 'Semestral'  },
+];
+
+export const ReportesView = ({ reporte, loading, periodo, offset, onCambiarPeriodo }) => {
+  return (
+    <div className="space-y-6">
+      {/* Selector de período con tabs */}
+      <div className="flex">
+        {PERIODOS.map(p => (
+          <button
+            key={p.id}
+            onClick={() => onCambiarPeriodo?.(p.id, 0)}
+            className={`px-5 py-4 text-sm font-medium border-b-2 ${
+              periodo === p.id
+                ? 'border-green-700 text-green-700'
+                : 'border-transparent text-gray-400'
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+```
+
+### Navegación de Períodos
+
+Para reportes diarios, semanales y mensuales, se puede navegar entre períodos anteriores y siguientes:
+
+```jsx title="Botones de navegación"
+<button
+  onClick={() => onCambiarPeriodo?.(periodo, offset + 1)}
+  title="Período anterior"
+>
+  ← {/* Flecha izquierda */}
+</button>
+
+<span className="text-xs text-gray-400 capitalize">
+  {etiqueta} {/* Ej: "Marzo 2026" o "Lun 10 - Dom 16 marzo" */}
+</span>
+
+<button
+  onClick={() => onCambiarPeriodo?.(periodo, Math.max(0, offset - 1))}
+  disabled={offset === 0}
+  title="Período siguiente"
+>
+  → {/* Flecha derecha */}
+</button>
+```
+
+<Note>
+El `offset` controla qué período se muestra: 0 = actual, 1 = anterior, 2 = dos períodos atrás, etc.
+</Note>
+
+## Cálculo de Períodos
+
+El sistema calcula automáticamente las fechas de inicio y fin según el tipo de período:
+
+```javascript title="Función de cálculo de períodos"
+function calcularPeriodo(tipo, offset = 0) {
+  const ahora = new Date();
+
+  if (tipo === 'diario') {
+    const dia = new Date(ahora);
+    dia.setDate(ahora.getDate() - offset);
+    const inicio = new Date(dia);
+    inicio.setHours(0, 0, 0, 0);
+    const hasta = offset === 0 ? new Date(ahora) : new Date(dia.setHours(23, 59, 59, 999));
+    return {
+      desde: inicio,
+      hasta,
+      etiqueta: inicio.toLocaleDateString('es-CO', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      }),
+    };
+  }
+
+  if (tipo === 'semanal') {
+    const diaSem = ahora.getDay();
+    const lunes = new Date(ahora);
+    lunes.setDate(ahora.getDate() - ((diaSem + 6) % 7) - offset * 7);
+    lunes.setHours(0, 0, 0, 0);
+    const domingo = new Date(lunes);
+    domingo.setDate(lunes.getDate() + 6);
+    domingo.setHours(23, 59, 59, 999);
+    return {
+      desde: lunes,
+      hasta: offset === 0 ? new Date(ahora) : domingo,
+      etiqueta: `${lunes.toLocaleDateString('es-CO', { 
+        day: 'numeric', month: 'short' 
+      })} — ${domingo.toLocaleDateString('es-CO', { 
+        day: 'numeric', month: 'short', year: 'numeric' 
+      })}`,
+    };
+  }
+
+  if (tipo === 'mensual') {
+    const inicio = new Date(ahora.getFullYear(), ahora.getMonth() - offset, 1);
+    inicio.setHours(0, 0, 0, 0);
+    const finMes = new Date(inicio.getFullYear(), inicio.getMonth() + 1, 0, 23, 59, 59, 999);
+    return {
+      desde: inicio,
+      hasta: offset === 0 ? new Date(ahora) : finMes,
+      etiqueta: inicio.toLocaleDateString('es-CO', { 
+        month: 'long', year: 'numeric' 
+      }),
+    };
+  }
+
+  // semestral
+  const mes = ahora.getMonth();
+  const esPrimerSemestre = mes < 6;
+  const inicio = new Date(ahora.getFullYear(), esPrimerSemestre ? 0 : 6, 1, 0, 0, 0, 0);
+  return {
+    desde: inicio,
+    hasta: ahora,
+    etiqueta: `${esPrimerSemestre ? '1er' : '2do'} semestre ${ahora.getFullYear()}`,
+  };
+}
+```
+
+## Tarjetas de Resumen
+
+El reporte muestra cuatro tarjetas principales con los totales del período:
+
+```jsx
+<ResumenCard
+  titulo="Estudiantes"
+  valor={reporte?.totalEstudiantes}
+  subtitulo="Registrados en el sistema"
+  icono="🎓"
+  color={{ bg: 'bg-blue-50', text: 'text-blue-600' }}
+/>
+
+<ResumenCard
+  titulo="Empleados"
+  valor={reporte?.totalEmpleados}
+  subtitulo="Personal administrativo"
+  icono="💼"
+  color={{ bg: 'bg-purple-50', text: 'text-purple-600' }}
+/>
+
+<ResumenCard
+  titulo="Contratistas"
+  valor={reporte?.totalContratistas}
+  subtitulo="Vinculados actualmente"
+  icono="🏢"
+  color={{ bg: 'bg-orange-50', text: 'text-orange-700' }}
+/>
+
+<ResumenCard
+  titulo="Fallas en el período"
+  valor={reporte?.fallasPeriodo}
+  subtitulo="Reportes sin carnet"
+  icono="⚠️"
+  color={{ bg: 'bg-yellow-50', text: 'text-yellow-500' }}
+/>
+```
+
+## Visualizaciones de Datos
+
+### Gráfico de Fallas por Día
+
+Gráfico de barras horizontales que muestra la distribución diaria de fallas en el período:
+
+```jsx
+<BarChart
+  data={reporte.fallasPorDia}
+  layout="vertical"
+  barSize={24}
+>
+  <XAxis type="number" allowDecimals={false} />
+  <YAxis type="category" dataKey="dia" width={70} />
+  <Tooltip formatter={(v) => [`${v} falla${v !== 1 ? 's' : ''}`, 'Total']} />
+  <Bar dataKey="total" radius={[0, 4, 4, 0]}>
+    {reporte.fallasPorDia.map((_, i) => (
+      <Cell key={i} fill={GANTT_COLORS[i % GANTT_COLORS.length]} />
+    ))}
+  </Bar>
+</BarChart>
+```
+
+### Gráficos Estilo Gantt
+
+El sistema incluye dos gráficos de distribución con barras horizontales de colores:
+
+<Tabs>
+  <Tab title="Estudiantes por Programa">
+    ```jsx
+    <GanttChart
+      titulo="Estudiantes por programa"
+      subtitulo="Distribución de matriculados activos"
+      filas={reporte?.porPrograma}
+      colKey="programa"
+      colorOffset={0}
+    />
+    ```
+    
+    Muestra la cantidad de estudiantes registrados en cada programa académico.
+  </Tab>
+  
+  <Tab title="Empleados por Dependencia">
+    ```jsx
+    <GanttChart
+      titulo="Empleados por dependencia"
+      subtitulo="Distribución del personal vinculado"
+      filas={reporte?.porDependencia}
+      colKey="dependencia"
+      colorOffset={5}
+    />
+    ```
+    
+    Muestra la distribución de empleados por área o dependencia.
+  </Tab>
+</Tabs>
+
+### Implementación del Componente Gantt
+
+```jsx title="Componente de barras horizontales"
+const GanttChart = ({ titulo, subtitulo, filas, colKey, colorOffset = 0 }) => {
+  const max = filas?.length ? Math.max(...filas.map(f => f.total)) : 1;
+  
+  return (
+    <div className="bg-white rounded-xl border shadow-sm">
+      <div className="px-5 py-4 border-b">
+        <p className="font-semibold text-gray-800">{titulo}</p>
+        <p className="text-xs text-gray-400">{subtitulo}</p>
+      </div>
+      <div className="px-5 py-4 space-y-2.5">
+        {filas.map((f, i) => {
+          const color = GANTT_COLORS[(i + colorOffset) % GANTT_COLORS.length];
+          const pct = max > 0 ? (f.total / max) * 100 : 0;
+          
+          return (
+            <div key={i} className="flex items-center gap-3">
+              <div className="text-xs text-gray-600 w-[140px] truncate">
+                {f[colKey]}
+              </div>
+              <div className="flex-1 bg-gray-100 rounded h-6">
+                <div
+                  className="h-full rounded flex items-center justify-end pr-2"
+                  style={{ width: `${Math.max(pct, 4)}%`, backgroundColor: color }}
+                >
+                  {pct > 20 && (
+                    <span className="text-white text-xs font-semibold">
+                      {f.total}
+                    </span>
+                  )}
+                </div>
+              </div>
+              {pct <= 20 && (
+                <span className="text-xs font-semibold text-gray-600 w-6">
+                  {f.total}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+```
+
+## Exportación a Excel
+
+Los reportes se pueden exportar a archivos Excel (.xlsx) con múltiples hojas de trabajo.
+
+### Estructura del Archivo Excel
+
+El archivo generado contiene las siguientes hojas:
+
+<Steps>
+  <Step title="Hoja 1: Resumen">
+    Información general del período, totales de personas registradas y fallas
+  </Step>
+  <Step title="Hoja 2: Fallas por día">
+    Tabla con día y total de fallas para cada fecha del período
+  </Step>
+  <Step title="Hoja 3: Por programa">
+    Distribución de estudiantes por programa académico
+  </Step>
+  <Step title="Hoja 4: Por dependencia">
+    Distribución de empleados por dependencia o área
+  </Step>
+  <Step title="Hoja 5: Fallas por programa">
+    Total de fallas acumuladas por programa académico en el período
+  </Step>
+  <Step title="Hoja 6: Fallas por dependencia">
+    Total de fallas acumuladas por dependencia en el período
+  </Step>
+  <Step title="Hoja 7: Fallas por empresa">
+    Total de fallas de contratistas agrupadas por empresa
+  </Step>
+</Steps>
+
+### Implementación de Exportación
+
+```javascript title="Función exportarExcel"
+const exportarExcel = () => {
+  if (!reporte) return;
+  setExportando(true);
+
+  try {
+    const wb = XLSX.utils.book_new();
+
+    // Hoja 1: Resumen general
+    const wsResumen = XLSX.utils.aoa_to_sheet([
+      ['Informe de Control de Acceso UCC'],
+      ['Período:', etiqueta],
+      ['Generado:', new Date().toLocaleString('es-CO')],
+      [],
+      ['── Personas registradas ──'],
+      ['Total estudiantes', 'Total empleados', 'Total contratistas', 'Total personas'],
+      [
+        reporte.totalEstudiantes ?? 0,
+        reporte.totalEmpleados ?? 0,
+        reporte.totalContratistas ?? 0,
+        totalUsers
+      ],
+      [],
+      ['── Fallas en el período ──'],
+      ['Total fallas', 'Fallas de estudiantes', 'Fallas de empleados', 'Fallas de contratistas'],
+      [
+        reporte.fallasPeriodo ?? 0,
+        reporte.fallasEstudiantes ?? 0,
+        reporte.fallasEmpleados ?? 0,
+        reporte.fallasContratistas ?? 0
+      ],
+    ]);
+    wsResumen['!cols'] = [{ wch: 30 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsResumen, 'Resumen');
+
+    // Hoja 2: Fallas por día
+    if (reporte.fallasPorDia?.length) {
+      const wsFallas = XLSX.utils.json_to_sheet(
+        reporte.fallasPorDia.map(f => ({
+          Día: f.dia,
+          'Total fallas': f.total
+        }))
+      );
+      wsFallas['!cols'] = [{ wch: 15 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(wb, wsFallas, 'Fallas por día');
+    }
+
+    // Hoja 3: Estudiantes por programa
+    if (reporte.porPrograma?.length) {
+      const wsPrograma = XLSX.utils.json_to_sheet(
+        reporte.porPrograma.map(p => ({
+          Programa: p.programa,
+          Estudiantes: p.total
+        }))
+      );
+      wsPrograma['!cols'] = [{ wch: 40 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(wb, wsPrograma, 'Por programa');
+    }
+
+    // Hoja 4: Empleados por dependencia
+    if (reporte.porDependencia?.length) {
+      const wsDep = XLSX.utils.json_to_sheet(
+        reporte.porDependencia.map(d => ({
+          Dependencia: d.dependencia,
+          Empleados: d.total
+        }))
+      );
+      wsDep['!cols'] = [{ wch: 35 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(wb, wsDep, 'Por dependencia');
+    }
+
+    // Hoja 5: Fallas por programa académico
+    if (reporte.fallasPorPrograma?.length) {
+      const wsFP = XLSX.utils.json_to_sheet(
+        reporte.fallasPorPrograma.map(r => ({
+          'Programa académico': r.programa,
+          'Fallas en el período': r.fallas_total,
+        }))
+      );
+      wsFP['!cols'] = [{ wch: 40 }, { wch: 22 }];
+      XLSX.utils.book_append_sheet(wb, wsFP, 'Fallas por programa');
+    }
+
+    // Nombre del archivo con fecha
+    const fecha = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `informe_ucc_${periodo}_${fecha}.xlsx`);
+  } finally {
+    setExportando(false);
+  }
+};
+```
+
+### Botón de Exportación
+
+```jsx
+<button
+  onClick={exportarExcel}
+  disabled={!reporte || loading || exportando}
+  className="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border border-green-700 text-green-700 hover:bg-green-50"
+>
+  <DownloadIcon className="w-4 h-4" />
+  {exportando ? 'Exportando...' : 'Descargar Excel'}
+</button>
+```
+
+## Hook de Reportes
+
+El sistema utiliza un hook personalizado para cargar los datos del reporte:
+
+```javascript title="src/modules/admin/application/hooks/useReporte.js"
+export const useReporte = (periodo = 'semanal', offset = 0) => {
+  const [reporte, setReporte] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    repo.getReporte(periodo, offset)
+      .then(data => { if (!cancelled) setReporte(data); })
+      .catch(err => { if (!cancelled) setError(err.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true };
+  }, [periodo, offset]);
+
+  return { reporte, loading, error };
+};
+```
+
+<Note>
+El hook se recarga automáticamente cada vez que cambia el `periodo` o el `offset`, garantizando que los datos siempre estén actualizados.
+</Note>
+
+## Paleta de Colores Gantt
+
+Los gráficos de barras utilizan una paleta de 15 colores para diferenciar visualmente cada categoría:
+
+```javascript
+const GANTT_COLORS = [
+  '#3AAFA9', '#F4A261', '#E76F51', '#2A9D8F', '#E9C46A',
+  '#264653', '#6A4C93', '#1982C4', '#FF595E', '#6BCB77',
+  '#4CC9F0', '#F77F00', '#06D6A0', '#EF476F', '#118AB2',
+];
+```
+
+## Casos de Uso
+
+<AccordionGroup>
+  <Accordion title="Reporte semanal para reunión de dirección" icon="calendar-week">
+    1. Selecciona "Semanal" en el selector de período
+    2. Navega a la semana deseada si es necesario
+    3. Revisa las gráficas y estadísticas en pantalla
+    4. Haz clic en "Descargar Excel" para compartir el informe
+  </Accordion>
+  
+  <Accordion title="Análisis mensual de fallas por facultad" icon="chart-column">
+    1. Selecciona "Mensual" y el mes correspondiente
+    2. Revisa el gráfico "Estudiantes por programa"
+    3. Exporta a Excel para análisis detallado
+    4. Abre la hoja "Fallas por programa" para ver tendencias
+  </Accordion>
+  
+  <Accordion title="Reporte semestral completo" icon="calendar-range">
+    1. Selecciona "Semestral" (no requiere navegación)
+    2. Revisa todas las métricas del semestre completo
+    3. Exporta el archivo Excel con 7 hojas de datos
+    4. Usa los datos para planificar el próximo semestre
+  </Accordion>
+</AccordionGroup>
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card title="Dashboard" icon="gauge-high" href="/admin/dashboard">
+    Volver al panel principal con estadísticas en tiempo real
+  </Card>
+  <Card title="Gestión de Usuarios" icon="users-gear" href="/admin/user-management">
+    Buscar y administrar usuarios del sistema
+  </Card>
+  <Card title="Nuevo Semestre" icon="calendar-plus" href="/admin/semester-management">
+    Preparar datos para el próximo período académico
+  </Card>
+</CardGroup>

@@ -1,0 +1,628 @@
+---
+title: 'Gestión de Semestre'
+description: 'Carga masiva de datos por CSV, inicio de nuevo semestre académico y proceso de transición'
+icon: 'calendar-plus'
+---
+
+## Descripción General
+
+El módulo de gestión de semestre permite a los administradores iniciar un nuevo período académico mediante la carga masiva de datos a través de archivos CSV, reemplazando los datos del semestre anterior de forma controlada y guiada.
+
+<Warning>
+Al iniciar un nuevo semestre, **todos los datos del semestre anterior se eliminarán** de forma permanente. Asegúrate de exportar los reportes finales antes de proceder.
+</Warning>
+
+## Proceso de Inicio de Semestre
+
+El sistema utiliza un wizard de 6 pasos para guiar al administrador de forma segura:
+
+<Steps>
+  <Step title="Paso 1: Información del Semestre">
+    Configura el nombre, fecha de inicio y fecha de fin del nuevo semestre
+  </Step>
+  <Step title="Paso 2: CSV de Usuarios (Obligatorio)">
+    Carga el archivo con los datos base de todos los usuarios
+  </Step>
+  <Step title="Paso 3: CSV de Estudiantes (Opcional)">
+    Asigna el rol de estudiante y programas académicos
+  </Step>
+  <Step title="Paso 4: CSV de Empleados (Opcional)">
+    Asigna el rol de empleado con cargos y dependencias
+  </Step>
+  <Step title="Paso 5: CSV de Contratistas (Opcional)">
+    Asigna el rol de contratista con empresas proveedoras
+  </Step>
+  <Step title="Paso 6: Confirmación y Procesamiento">
+    Revisa el resumen y confirma el inicio del nuevo semestre
+  </Step>
+</Steps>
+
+## Componente Stepper
+
+El sistema muestra un indicador visual de progreso en la parte superior:
+
+```jsx title="src/modules/admin/presentation/components/views/CargarCSVView.jsx"
+const NOMBRES_PASO = [
+  'Semestre',
+  'Usuarios',
+  'Estudiantes',
+  'Empleados',
+  'Contratistas',
+  'Confirmar'
+];
+
+const Stepper = ({ pasoActual }) => (
+  <div className="bg-white rounded-xl border shadow-sm px-6 py-4">
+    <div className="flex items-center">
+      {NOMBRES_PASO.map((nombre, i) => {
+        const done = i < pasoActual;
+        const active = i === pasoActual;
+        
+        return (
+          <React.Fragment key={i}>
+            <div className="flex flex-col items-center">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                done ? 'bg-green-700 text-white' :
+                active ? 'bg-[#1B4332] text-white' :
+                'bg-gray-100 text-gray-400'
+              }`}>
+                {done ? '✓' : i + 1}
+              </div>
+              <p className={`text-xs mt-1 font-medium ${
+                active ? 'text-[#1B4332]' : done ? 'text-green-700' : 'text-gray-400'
+              }`}>
+                {nombre}
+              </p>
+            </div>
+            {i < NOMBRES_PASO.length - 1 && (
+              <div className={`flex-1 h-0.5 mx-1 ${
+                i < pasoActual ? 'bg-green-700' : 'bg-gray-100'
+              }`} />
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  </div>
+);
+```
+
+## Paso 1: Información del Semestre
+
+En el primer paso, el administrador configura los datos básicos del nuevo período académico:
+
+```jsx title="Formulario de semestre"
+<div className="bg-white rounded-xl border shadow-sm p-6">
+  <h3 className="font-bold text-gray-800 mb-1">
+    Información del nuevo semestre
+  </h3>
+  <p className="text-sm text-gray-400 mb-5">
+    Al confirmar al final, los datos del semestre anterior serán eliminados
+    y estos los reemplazarán.
+  </p>
+  
+  <div className="space-y-4">
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1.5">
+        Nombre del semestre
+      </label>
+      <input
+        type="text"
+        value={semestre.nombre}
+        onChange={e => setSemestre(s => ({ ...s, nombre: e.target.value }))}
+        placeholder="ej. 2026-1"
+        className="w-full border rounded-lg px-3 py-2 text-sm"
+      />
+    </div>
+    
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1.5">
+          Fecha de inicio
+        </label>
+        <input
+          type="date"
+          value={semestre.fechaInicio}
+          onChange={e => setSemestre(s => ({ ...s, fechaInicio: e.target.value }))}
+          className="w-full border rounded-lg px-3 py-2 text-sm"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1.5">
+          Fecha de fin
+        </label>
+        <input
+          type="date"
+          value={semestre.fechaFin}
+          onChange={e => setSemestre(s => ({ ...s, fechaFin: e.target.value }))}
+          className="w-full border rounded-lg px-3 py-2 text-sm"
+        />
+      </div>
+    </div>
+  </div>
+</div>
+```
+
+### Validación
+
+El sistema valida que:
+- El nombre del semestre no esté vacío
+- Ambas fechas estén completas
+- La fecha de fin sea posterior a la fecha de inicio
+
+```javascript
+const semestreValido =
+  semestre.nombre.trim() &&
+  semestre.fechaInicio &&
+  semestre.fechaFin &&
+  semestre.fechaFin > semestre.fechaInicio;
+```
+
+## Agregar Usuario Individual
+
+Además de la carga masiva, el sistema permite agregar usuarios individuales directamente desde el paso 1:
+
+```jsx
+<button
+  onClick={() => setAgregarAbierto(a => !a)}
+  className="text-sm border px-4 py-2 rounded-lg"
+>
+  + Agregar usuario
+</button>
+```
+
+### Panel de Agregar Usuario
+
+El panel se divide en dos subpasos:
+
+<Tabs>
+  <Tab title="Subpaso 1: Datos Base + Roles">
+    ```jsx
+    <div>
+      <input
+        placeholder="ID Institucional (ej. 80123456)"
+        value={base.id_institucional}
+        onChange={e => setBase(b => ({ ...b, id_institucional: e.target.value }))}
+      />
+      <input
+        placeholder="Documento (ej. 1001234567)"
+        value={base.documento_identidad}
+        onChange={e => setBase(b => ({ ...b, documento_identidad: e.target.value }))}
+      />
+      <input
+        placeholder="Nombre completo"
+        value={base.nombre_completo}
+        onChange={e => setBase(b => ({ ...b, nombre_completo: e.target.value }))}
+      />
+      
+      {/* Selector de roles */}
+      <div className="flex gap-2">
+        {ROLES_CONFIG.map(({ key, label, on, off }) => (
+          <button
+            key={key}
+            onClick={() => toggleRol(key)}
+            className={roles.includes(key) ? on : off}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+    ```
+  </Tab>
+  
+  <Tab title="Subpaso 2: Información Específica">
+    ```jsx
+    {roles.includes('estudiante') && (
+      <div className="bg-blue-50 rounded-lg p-3">
+        <p className="text-xs font-bold text-blue-700">ESTUDIANTE</p>
+        <input
+          placeholder="Programa académico *"
+          value={est.programa_academico}
+          onChange={e => setEst({ programa_academico: e.target.value })}
+        />
+      </div>
+    )}
+    
+    {roles.includes('empleado') && (
+      <div className="bg-purple-50 rounded-lg p-3">
+        <p className="text-xs font-bold text-purple-700">EMPLEADO</p>
+        <input placeholder="Cargo *" value={emp.cargo} />
+        <input placeholder="Dependencia (opcional)" value={emp.dependencia} />
+      </div>
+    )}
+    
+    {roles.includes('contratista') && (
+      <div className="bg-orange-50 rounded-lg p-3">
+        <p className="text-xs font-bold text-orange-600">CONTRATISTA</p>
+        <input placeholder="Empresa *" value={con.empresa} />
+      </div>
+    )}
+    ```
+  </Tab>
+</Tabs>
+
+## Pasos 2-5: Carga de CSV
+
+Cada CSV tiene una configuración específica con columnas requeridas y opcionales:
+
+### Configuración de Pasos CSV
+
+```javascript
+const PASOS_CSV = [
+  {
+    key: 'usuarios',
+    label: 'Usuarios base',
+    descripcion: 'Carga los datos personales base. Debe hacerse primero.',
+    obligatorio: true,
+    color: { btn: 'bg-gray-700', badge: 'bg-gray-100 text-gray-700' },
+    columnas: [
+      { key: 'id_institucional', req: true, ejemplo: '80123456' },
+      { key: 'documento_identidad', req: true, ejemplo: '1001234567' },
+      { key: 'nombre_completo', req: true, ejemplo: 'Juan Perez Gomez' },
+    ],
+    preview: ['id_institucional', 'documento_identidad', 'nombre_completo'],
+    handler: (filas) => repo.cargarUsuarios(filas),
+  },
+  {
+    key: 'estudiantes',
+    label: 'Estudiantes',
+    descripcion: 'Asigna el rol Estudiante y registra el programa académico.',
+    obligatorio: false,
+    color: { btn: 'bg-blue-600', badge: 'bg-blue-50 text-blue-700' },
+    columnas: [
+      { key: 'id_institucional', req: true, ejemplo: '80123456' },
+      { key: 'programa_academico', req: true, ejemplo: 'Ingeniería de Sistemas' },
+    ],
+    preview: ['id_institucional', 'programa_academico'],
+    handler: (filas) => repo.cargarEstudiantes(filas),
+  },
+  // ... empleados y contratistas
+];
+```
+
+### Tabla de Formato Esperado
+
+Para cada CSV, el sistema muestra una tabla con el formato esperado:
+
+```jsx
+<div className="bg-white rounded-xl border shadow-sm p-5">
+  <p className="font-semibold text-sm mb-3">Formato esperado del CSV</p>
+  <table className="w-full text-xs">
+    <thead>
+      <tr className="bg-gray-50">
+        <th>Columna (encabezado exacto)</th>
+        <th>Requerido</th>
+        <th>Ejemplo</th>
+      </tr>
+    </thead>
+    <tbody>
+      {columnas.map(col => (
+        <tr key={col.key}>
+          <td><code>{col.key}</code></td>
+          <td>{col.req ? 'Sí' : 'Opcional'}</td>
+          <td>{col.ejemplo}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
+```
+
+## Carga de Archivos CSV
+
+### Zona de Drag & Drop
+
+```jsx
+<div
+  onDrop={handleDrop}
+  onDragOver={handleDragOver}
+  onDragLeave={handleDragLeave}
+  className={`rounded-xl border-2 border-dashed p-10 text-center ${
+    dragOver ? 'border-green-500 bg-green-50' : 'border-gray-300 bg-white'
+  }`}
+>
+  {dragOver ? (
+    <p className="text-green-700 font-bold text-lg">
+      ↓ Suelta el archivo aquí
+    </p>
+  ) : (
+    <>
+      <p className="text-gray-700 font-semibold mb-1">
+        Selecciona o arrastra el CSV de {pasoConfig.label}
+      </p>
+      <p className="text-gray-400 text-xs mb-5">
+        Archivo .csv — separado por comas — codificación UTF-8
+      </p>
+      <label className="cursor-pointer inline-block bg-gray-700 text-white px-5 py-2.5 rounded-lg">
+        Elegir archivo
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv"
+          onChange={handleArchivo}
+          className="hidden"
+        />
+      </label>
+    </>
+  )}
+</div>
+```
+
+### Parser de CSV
+
+El sistema incluye un parser que maneja diferentes formatos:
+
+```javascript
+function parsearCSV(texto) {
+  // Eliminar BOM (Excel UTF-8)
+  const textoLimpio = texto.replace(/^\uFEFF/, '').trim();
+  const lineas = textoLimpio.split('\n');
+  
+  // Soportar separador ; (Excel español) o , (estándar)
+  const separador = lineas[0].includes(';') ? ';' : ',';
+  
+  const encabezados = lineas[0]
+    .split(separador)
+    .map(h => h.trim().replace(/\r/g, '').replace(/"/g, ''));
+  
+  return lineas.slice(1)
+    .map(linea => {
+      const valores = linea
+        .split(separador)
+        .map(v => v.trim().replace(/\r/g, '').replace(/"/g, ''));
+      
+      const fila = {};
+      encabezados.forEach((h, i) => {
+        fila[h] = valores[i] ?? '';
+      });
+      return fila;
+    })
+    .filter(f => f.id_institucional); // Solo filas con ID válido
+}
+```
+
+<Note>
+El parser automáticamente detecta si el archivo usa comas (`,`) o punto y coma (`;`) como separador, y elimina el BOM que agrega Excel en archivos UTF-8.
+</Note>
+
+### Vista Previa de Datos
+
+Una vez cargado el CSV, el sistema muestra una vista previa de los primeros 15 registros:
+
+```jsx
+<div className="bg-white rounded-xl border shadow-sm">
+  <div className="px-5 py-4">
+    <p className="font-semibold">{archivo?.name}</p>
+    <p className="text-xs text-gray-400">
+      <span className="font-medium text-gray-600">{filas.length} registros</span> detectados
+    </p>
+  </div>
+  <table className="w-full text-xs">
+    <thead>
+      <tr className="bg-gray-50">
+        <th>#</th>
+        {previewCols.map(k => (
+          <th key={k}>{k.replace(/_/g, ' ')}</th>
+        ))}
+      </tr>
+    </thead>
+    <tbody>
+      {filas.slice(0, 15).map((fila, i) => (
+        <tr key={i}>
+          <td>{i + 1}</td>
+          {previewCols.map(k => (
+            <td key={k}>{fila[k] || '-'}</td>
+          ))}
+        </tr>
+      ))}
+    </tbody>
+  </table>
+  {filas.length > 15 && (
+    <p className="text-xs text-gray-400 text-center py-3">
+      ... y {filas.length - 15} registros más
+    </p>
+  )}
+</div>
+```
+
+## Paso 6: Confirmación Final
+
+Antes de procesar los datos, el sistema muestra un resumen completo:
+
+```jsx
+<div className="space-y-4">
+  {/* Advertencia */}
+  <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
+    <p className="text-sm font-semibold text-amber-800 mb-2">
+      ⚠ Esta acción eliminará todos los datos del semestre anterior
+    </p>
+    <ul className="text-xs text-amber-700 space-y-1 list-disc list-inside">
+      <li>Todos los usuarios, roles y fallas actuales serán borrados</li>
+      <li>Se cargarán los CSV que preparaste en los pasos anteriores</li>
+      <li>Esta acción no se puede deshacer</li>
+    </ul>
+  </div>
+
+  {/* Resumen */}
+  <div className="bg-white rounded-xl border shadow-sm p-5">
+    <p className="font-bold text-sm mb-4">Resumen del nuevo semestre</p>
+    <div className="space-y-2 text-sm">
+      <div className="flex justify-between">
+        <span className="text-gray-500">Semestre</span>
+        <span className="font-bold">{semestre.nombre}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-gray-500">Inicio</span>
+        <span>{formatearFecha(semestre.fechaInicio)}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-gray-500">Fin</span>
+        <span>{formatearFecha(semestre.fechaFin)}</span>
+      </div>
+    </div>
+    
+    {/* Tarjetas de conteo */}
+    <div className="border-t border-gray-50 pt-3 grid grid-cols-2 gap-2 text-xs">
+      {[
+        { label: 'Usuarios', key: 'usuarios', color: 'bg-gray-50 text-gray-700' },
+        { label: 'Estudiantes', key: 'estudiantes', color: 'bg-blue-50 text-blue-700' },
+        { label: 'Empleados', key: 'empleados', color: 'bg-purple-50 text-purple-700' },
+        { label: 'Contratistas', key: 'contratistas', color: 'bg-orange-50 text-orange-700' },
+      ].map(({ label, key, color }) => (
+        <div key={key} className={`rounded-lg px-3 py-2 flex justify-between ${color}`}>
+          <span className="font-medium">{label}</span>
+          <span className="font-bold">
+            {staged[key]?.length ? `${staged[key].length} reg.` : 'Omitido'}
+          </span>
+        </div>
+      ))}
+    </div>
+  </div>
+</div>
+```
+
+## Procesamiento del Semestre
+
+Al confirmar, el sistema ejecuta el proceso completo:
+
+```javascript
+const handleEmpezarSemestre = async () => {
+  setCargando(true);
+  setError(null);
+  
+  try {
+    // 1. Crear el nuevo semestre (limpia datos anteriores)
+    await repo.iniciarNuevoSemestre(
+      semestre.nombre.trim(),
+      semestre.fechaInicio,
+      semestre.fechaFin
+    );
+    
+    // 2. Cargar cada CSV en orden
+    const res = {};
+    if (staged.usuarios?.length) {
+      res.usuarios = await repo.cargarUsuarios(staged.usuarios);
+    }
+    if (staged.estudiantes?.length) {
+      res.estudiantes = await repo.cargarEstudiantes(staged.estudiantes);
+    }
+    if (staged.empleados?.length) {
+      res.empleados = await repo.cargarEmpleados(staged.empleados);
+    }
+    if (staged.contratistas?.length) {
+      res.contratistas = await repo.cargarContratistas(staged.contratistas);
+    }
+    
+    setResultado(res);
+    setPaso(6); // Ir a pantalla de éxito
+  } catch (err) {
+    setError(err.message ?? 'Error al iniciar el semestre');
+  } finally {
+    setCargando(false);
+  }
+};
+```
+
+## Pantalla de Éxito
+
+Una vez completado el proceso, se muestra una pantalla de confirmación:
+
+```jsx
+<div className="bg-white rounded-2xl border border-green-200 shadow-sm p-10 text-center">
+  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+    <CheckIcon className="w-8 h-8 text-green-700" />
+  </div>
+  
+  <h2 className="text-xl font-bold text-gray-800 mb-1">
+    ¡Semestre {semestre.nombre} iniciado!
+  </h2>
+  <p className="text-gray-500 text-sm mb-6">
+    {total} registros cargados en total
+  </p>
+  
+  <div className="grid grid-cols-2 gap-3 text-sm mb-6">
+    {[
+      { label: 'Usuarios', key: 'usuarios', color: 'bg-gray-50 text-gray-700' },
+      { label: 'Estudiantes', key: 'estudiantes', color: 'bg-blue-50 text-blue-700' },
+      { label: 'Empleados', key: 'empleados', color: 'bg-purple-50 text-purple-700' },
+      { label: 'Contratistas', key: 'contratistas', color: 'bg-orange-50 text-orange-700' },
+    ].map(({ label, key, color }) => (
+      <div key={key} className={`rounded-xl p-3 text-left ${color}`}>
+        <p className="font-medium text-xs mb-0.5">{label}</p>
+        <p className="text-lg font-bold">
+          {resultado?.[key]?.insertados ?? 'Omitido'}
+        </p>
+      </div>
+    ))}
+  </div>
+  
+  <button
+    onClick={reiniciar}
+    className="px-5 py-2.5 rounded-lg bg-[#1B4332] text-white"
+  >
+    Iniciar otro semestre
+  </button>
+</div>
+```
+
+## Formatos CSV de Ejemplo
+
+<AccordionGroup>
+  <Accordion title="usuarios.csv" icon="file-csv">
+    ```csv
+    id_institucional,documento_identidad,nombre_completo
+    80123456,1001234567,Juan Perez Gomez
+    80234567,1002345678,Maria Rodriguez Lopez
+    80345678,1003456789,Carlos Martinez Silva
+    ```
+  </Accordion>
+  
+  <Accordion title="estudiantes.csv" icon="file-csv">
+    ```csv
+    id_institucional,programa_academico
+    80123456,Ingeniería de Sistemas
+    80234567,Derecho
+    ```
+  </Accordion>
+  
+  <Accordion title="empleados.csv" icon="file-csv">
+    ```csv
+    id_institucional,cargo,dependencia
+    80345678,Coordinador de Tesorería,Área Financiera
+    80456789,Asistente Administrativo,Rectoría
+    ```
+  </Accordion>
+  
+  <Accordion title="contratistas.csv" icon="file-csv">
+    ```csv
+    id_institucional,empresa
+    80567890,Sistemas Avanzados SAS
+    80678901,Servicios Tecnológicos LTDA
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Recomendaciones
+
+<Note>
+**Antes de iniciar un nuevo semestre:**
+1. Exporta todos los reportes del semestre actual (diario, semanal, mensual, semestral)
+2. Guarda copias de seguridad de los archivos Excel generados
+3. Verifica que todos los CSV tengan el formato correcto
+4. Prueba con un archivo pequeño primero si no estás seguro
+</Note>
+
+## Próximos Pasos
+
+<CardGroup cols={2}>
+  <Card title="Dashboard" icon="gauge-high" href="/admin/dashboard">
+    Volver al panel principal con el nuevo semestre activo
+  </Card>
+  <Card title="Gestión de Usuarios" icon="users-gear" href="/admin/user-management">
+    Revisa los usuarios cargados en el nuevo semestre
+  </Card>
+  <Card title="Reportes" icon="file-excel" href="/admin/reports">
+    Genera reportes del nuevo período académico
+  </Card>
+</CardGroup>

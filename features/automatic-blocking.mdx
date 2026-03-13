@@ -1,0 +1,380 @@
+---
+title: Automatic Blocking
+description: How the system automatically blocks users who reach 4 failures and the unblocking process
+icon: ban
+---
+
+## Overview
+
+The UCC Access Control System implements **automatic blocking** to enforce accountability for TIC card management. When a user accumulates **4 failures**, their account is automatically blocked and they can no longer access the contingency system.
+
+<Warning>
+Blocking is irreversible by the user. Only authorized administrators can unblock accounts.
+</Warning>
+
+## Blocking Rules
+
+The system follows these strict rules:
+
+### Four-Strike Policy
+
+<Steps>
+  <Step title="First failure (1/4)">
+    ✅ **Access granted**  
+    User can continue using the system. Warning message displayed.
+  </Step>
+  <Step title="Second failure (2/4)">
+    ✅ **Access granted**  
+    User can continue using the system. Stronger warning displayed.
+  </Step>
+  <Step title="Third failure (3/4)">
+    ⚠️ **Access granted with high risk warning**  
+    User is at critical risk. Next failure will trigger automatic blocking.
+  </Step>
+  <Step title="Fourth failure (4/4)">
+    🚫 **Account automatically blocked**  
+    Access denied. User must contact administration to resolve.
+  </Step>
+</Steps>
+
+### Failure Types
+
+Both failure types count equally toward the blocking threshold:
+
+- **Olvido** (Forgot): Each incident counts as +1 failure
+- **Pérdida** (Lost): Each incident counts as +1 failure
+
+<Note>
+There is no distinction between failure types for blocking purposes. Whether a user forgets their card 4 times or loses it 4 times, the result is the same: automatic blocking.
+</Note>
+
+## Technical Implementation
+
+### Database Trigger
+
+Automatic blocking is enforced at the database level using PostgreSQL triggers:
+
+```sql database/supabase/07_fallas.sql
+CREATE OR REPLACE FUNCTION fn_actualizar_fallas()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_id_inst   VARCHAR(20);
+    v_total     INT;
+BEGIN
+    -- Determine the affected user
+    v_id_inst := CASE WHEN TG_OP = 'DELETE' THEN OLD.id_institucional
+                                             ELSE NEW.id_institucional END;
+
+    -- Count total failures for this user
+    SELECT COUNT(*) INTO v_total
+    FROM fallas
+    WHERE id_institucional = v_id_inst;
+
+    -- Update failure counter and auto-block at 4 failures
+    UPDATE usuarios
+    SET total_fallas = v_total,
+        acceso       = CASE 
+            WHEN v_total >= 4 THEN 'bloqueado' 
+            ELSE acceso 
+        END
+    WHERE id_institucional = v_id_inst;
+
+    RETURN NULL;
+END;
+$$;
+
+-- Trigger fires after every INSERT into fallas table
+CREATE TRIGGER trg_fallas_insert
+    AFTER INSERT ON fallas
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_actualizar_fallas();
+```
+
+<Info>
+**Why database-level enforcement?**
+- **Reliability**: Cannot be bypassed by application bugs
+- **Consistency**: Works regardless of which client registers the failure
+- **Atomicity**: Blocking happens instantly in the same transaction
+</Info>
+
+### User Entity Helper Methods
+
+The `User` entity provides helper methods to check blocking status:
+
+```javascript src/modules/login/domain/entities/User.js
+export class User {
+  constructor({ acceso, totalFallas, ...rest }) {
+    this.acceso = acceso;
+    this.totalFallas = totalFallas;
+    // ... other fields
+  }
+
+  // Check if user is blocked
+  isBlocked() {
+    return this.acceso === 'bloqueado';
+  }
+
+  // Check if user is at high risk (3 failures)
+  isAtRisk() {
+    return this.totalFallas >= 3;
+  }
+
+  // Calculate remaining attempts before blocking
+  getRemainingAttempts() {
+    return Math.max(0, 4 - this.totalFallas);
+  }
+}
+```
+
+## User Experience Flow
+
+### Scenario: User Reaches 4 Failures
+
+1. **User logs in** with institutional ID
+2. **User selects failure type** (olvido or pérdida)
+3. **System records 4th failure**:
+   - Inserts record into `fallas` table
+   - Trigger fires and updates `usuarios` table
+   - `total_fallas` becomes `4`
+   - `acceso` becomes `'bloqueado'`
+4. **User sees blocked message**:
+   ```
+   🚫 ACCESO BLOQUEADO
+   
+   Has alcanzado el límite de 4 fallas registradas.
+   Tu acceso al sistema ha sido bloqueado.
+   
+   Debes dirigirte a la Dirección para resolver esta situación.
+   ```
+5. **Future login attempts fail** at authentication stage
+
+### Warning Messages
+
+Users see progressive warnings as they accumulate failures:
+
+<Accordion title="User with 1 failure">
+```
+✅ ACCESO PERMITIDO
+
+Fallas acumuladas: 1/4
+
+ℹ️ Recuerda traer tu TIC la próxima vez.
+```
+</Accordion>
+
+<Accordion title="User with 2 failures">
+```
+✅ ACCESO PERMITIDO
+
+Fallas acumuladas: 2/4
+
+⚠️ ADVERTENCIA
+Llevas 2 fallas registradas. Al llegar a 4 tu acceso será bloqueado.
+```
+</Accordion>
+
+<Accordion title="User with 3 failures">
+```
+⚠️ ACCESO PERMITIDO - ÚLTIMA ADVERTENCIA
+
+Fallas acumuladas: 3/4
+
+🚨 RIESGO CRÍTICO
+Esta es tu ÚLTIMA advertencia. 
+Si olvidas o pierdes tu TIC una vez más, serás bloqueado automáticamente.
+```
+</Accordion>
+
+<Accordion title="User with 4 failures">
+```
+🚫 ACCESO BLOQUEADO
+
+Fallas acumuladas: 4/4
+
+Has alcanzado el límite de fallas.
+Debe dirigirse a la Dirección para resolver esta situación.
+```
+</Accordion>
+
+## Unblocking Process
+
+Only authorized administrators can unblock users. The process involves:
+
+### Admin Dashboard Action
+
+Administrators can unblock users through the admin interface:
+
+```javascript src/modules/admin/application/hooks/useAdminDashboard.js
+const toggleAcceso = async (id_institucional, nuevoAcceso) => {
+  // Call repository to update user access status
+  await repo.toggleAcceso(id_institucional, nuevoAcceso);
+  
+  // Update local state
+  setUsuarios(prev =>
+    prev.map(u =>
+      u.id_institucional === id_institucional
+        ? { 
+            ...u, 
+            acceso: nuevoAcceso, 
+            total_fallas: nuevoAcceso === 'activo' ? 0 : u.total_fallas 
+          }
+        : u
+    )
+  );
+  
+  // Refresh dashboard statistics
+  repo.getStats().then(s => setStats(s)).catch(() => {});
+};
+```
+
+### Database Implementation
+
+Unblocking resets the failure counter:
+
+```sql
+-- Unblock a user and reset failure counter
+UPDATE usuarios
+SET acceso = 'activo',
+    total_fallas = 0
+WHERE id_institucional = '80123456';
+
+-- Note: Past failure records remain in the fallas table for audit purposes
+-- Only the counter and access status are reset
+```
+
+<Warning>
+**Important**: Unblocking does NOT delete failure history. Historical failure records remain in the `fallas` table for audit and reporting purposes. Only the `total_fallas` counter and `acceso` status are reset.
+</Warning>
+
+## Admin Dashboard View
+
+### Blocked Users List
+
+Administrators can view all blocked users:
+
+```sql
+SELECT 
+    u.id_institucional,
+    u.nombre_completo,
+    u.total_fallas,
+    COUNT(f.id) as failure_count,
+    MAX(f.fecha_hora) as last_failure_date
+FROM usuarios u
+LEFT JOIN fallas f ON f.id_institucional = u.id_institucional
+WHERE u.acceso = 'bloqueado'
+GROUP BY u.id_institucional, u.nombre_completo, u.total_fallas
+ORDER BY last_failure_date DESC;
+```
+
+The admin dashboard displays blocked users with:
+- User name and institutional ID
+- Total failure count
+- Date of most recent failure
+- **Unblock** button (restricted to authorized admins)
+
+### Statistics Panel
+
+The dashboard shows real-time blocking statistics:
+
+```javascript
+stats = {
+  bloqueados: 12,      // 🔴 Currently blocked users
+  riesgo: 8,           // 🟡 Users with 3 failures (at risk)
+  fallas_2: 24,        // 🟠 Users with 2 failures
+  fallas_1: 45,        // 🔵 Users with 1 failure
+  sin_fallas: 234      // ⚫ Users with 0 failures
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="🔴 Bloqueados" icon="ban" color="#EF4444">
+    Users currently blocked (4+ failures)
+  </Card>
+  <Card title="🟡 En Riesgo" icon="triangle-exclamation" color="#EAB308">
+    Users with 3 failures (one away from blocking)
+  </Card>
+</CardGroup>
+
+## Semester Reset
+
+At the start of each semester, the system can be reset:
+
+```sql database/supabase/09_semestres.sql
+-- Reset all failure counters and unblock all users
+UPDATE usuarios
+SET total_fallas = 0,
+    acceso = 'activo'
+WHERE acceso = 'bloqueado';
+
+-- Optionally clear failure history (use with caution)
+-- DELETE FROM fallas;
+```
+
+<Warning>
+**Semester resets should be coordinated with university administration** and only performed at official semester transitions. Consider exporting failure data for institutional records before clearing.
+</Warning>
+
+## Audit Trail
+
+All blocking and unblocking actions should be logged:
+
+```sql
+-- Example audit log entry for unblocking
+INSERT INTO auditoria (
+    accion,
+    tabla_afectada,
+    registro_id,
+    admin_id,
+    observaciones,
+    fecha_hora
+) VALUES (
+    'DESBLOQUEO_USUARIO',
+    'usuarios',
+    123,
+    45,  -- admin user ID
+    'Usuario presentó TIC nuevo y justificación válida',
+    NOW()
+);
+```
+
+## Preventing Blocks
+
+Users can avoid blocking by:
+
+1. **Always carrying their TIC card** to campus
+2. **Monitoring their failure count** each time they log in
+3. **Taking action at 2-3 failures** (e.g., getting a backup card holder)
+4. **Reporting lost cards immediately** to get a replacement
+
+### User Education
+
+The system displays educational messages:
+
+- **Login screen**: "Recuerda: este sistema es SOLO para cuando olvidas tu TIC"
+- **After 1st failure**: Tips on how to remember the card
+- **After 2nd failure**: Suggestion to set phone reminders
+- **After 3rd failure**: Critical warning with steps to avoid blocking
+
+## Business Rules Summary
+
+| Rule | Behavior |
+|------|----------|
+| **Blocking threshold** | Exactly 4 failures |
+| **Automatic blocking** | Yes, enforced at database level |
+| **User self-unblock** | No, administrator only |
+| **Failure counter reset** | Only when unblocked by admin or semester reset |
+| **Failure history** | Preserved permanently for auditing |
+| **Multiple roles** | Blocking applies to entire user account, not individual roles |
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Failure Tracking" icon="clipboard-list" href="/features/failure-tracking">
+    Learn how failures are recorded and counted
+  </Card>
+  <Card title="Admin Dashboard" icon="gauge-high" href="/admin/dashboard">
+    Manage blocked users and view system statistics
+  </Card>
+</CardGroup>

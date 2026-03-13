@@ -1,0 +1,219 @@
+---
+title: "System Architecture"
+description: "Overview of the UCC Control de Acceso system architecture"
+icon: "sitemap"
+---
+
+## Overview
+
+UCC Control de Acceso is a SaaS access control system designed for Universidad Cooperativa de Colombia. The system manages contingent access for users who don't have their physical ID card, tracking failures, managing blocks, and providing comprehensive administrative reporting.
+
+<Note>
+  This application is **ONLY** used when users **DO NOT** have their physical ID card. It does not register normal access.
+</Note>
+
+## Architecture Pattern
+
+The system follows **Clean Architecture** principles, ensuring:
+
+- **Separation of concerns** between business logic and external dependencies
+- **Testability** through dependency injection
+- **Maintainability** with clear layer boundaries
+- **Scalability** through modular design
+
+## System Components
+
+### Frontend Application
+
+A Progressive Web App (PWA) built with modern web technologies:
+
+<CardGroup cols={2}>
+  <Card title="User Interface" icon="user">
+    Login screens, user profiles, failure registration
+  </Card>
+  <Card title="Admin Panel" icon="shield-halved">
+    Dashboard, user management, reporting, data imports
+  </Card>
+  <Card title="Offline Support" icon="wifi">
+    Service workers for basic offline functionality
+  </Card>
+  <Card title="Responsive Design" icon="mobile">
+    Optimized for mobile and desktop devices
+  </Card>
+</CardGroup>
+
+### Backend Services
+
+The backend is implemented using Supabase, providing:
+
+- **Database**: PostgreSQL database for all system data
+- **Authentication**: User and admin authentication
+- **Real-time Updates**: Live data synchronization
+- **Storage**: File storage for reports and documents
+
+### Database Layer
+
+A comprehensive relational database schema including:
+
+- **Users** - Main user table with institutional ID
+- **Roles** - Multi-role support (Student, Employee, Contractor)
+- **Failures** - Historical record of access without ID card
+- **Blocks** - User blocking system with automatic and manual triggers
+- **Administrators** - Admin users with permission levels
+- **Audit** - Complete audit trail of all system actions
+
+See the [Database Schema](/database/schema) for detailed information.
+
+## Module Structure
+
+The frontend is organized into **feature modules**, each implementing Clean Architecture:
+
+```
+src/modules/
+├── login/              # Authentication module
+├── user-profile/       # User information display
+└── admin/              # Administrative functions
+```
+
+Each module follows the same layer structure (see [Clean Architecture](/development/clean-architecture) for details).
+
+## Data Flow
+
+### User Login Flow
+
+<Steps>
+  <Step title="ID Input">
+    User enters their institutional ID (e.g., 80123456)
+  </Step>
+  <Step title="Validation">
+    System validates format and checks if user exists in database
+  </Step>
+  <Step title="User Display">
+    Shows user information including all roles and current failure count
+  </Step>
+  <Step title="Reason Selection">
+    User selects reason: Forgot, Lost, or Stolen
+  </Step>
+  <Step title="Processing">
+    System processes the request based on business rules
+  </Step>
+  <Step title="Result">
+    Shows access granted/denied with updated failure count
+  </Step>
+</Steps>
+
+### Business Rules
+
+<Warning>
+  **Forgot** (allows 3 times, blocks on 4th):
+  - 1st time: +1 failure → ✅ ACCESS GRANTED (1/4)
+  - 2nd time: +1 failure → ✅ ACCESS GRANTED (2/4)
+  - 3rd time: +1 failure → ⚠️ ACCESS GRANTED (3/4) - AT RISK
+  - 4th time: +1 failure → 🚫 AUTOMATICALLY BLOCKED
+</Warning>
+
+<Warning>
+  **Lost** or **Stolen**:
+  - 🚫 IMMEDIATE BLOCK (without incrementing counter)
+</Warning>
+
+## Admin Features
+
+The administrative panel provides comprehensive management capabilities:
+
+### Dashboard Metrics
+
+Real-time statistics displayed on the main dashboard:
+
+- 🔴 Currently blocked users
+- 🟡 Users with 3 failures (at risk)
+- 🟠 Users with 2 failures
+- 🔵 Users with 1 failure
+- ⚫ Users with no failures
+- 📊 Total contingent access today/week/month
+
+### Core Functions
+
+<Accordion title="User Search & Management">
+  Search users by institutional ID or identity document to view:
+  - Complete personal information
+  - All active roles (Student/Employee/Contractor)
+  - Role-specific data (program, faculty, department, etc.)
+  - Current status: active or blocked
+  - Failure counter: X/4
+  - Failure history (dates, reasons)
+  - Active blocks (if any)
+</Accordion>
+
+<Accordion title="Block Management">
+  Administrators can unblock users with:
+  - Mandatory observation/justification field
+  - Action confirmation
+  - Automatic counter reset to 0
+  - Complete audit trail recording
+</Accordion>
+
+<Accordion title="Monthly Reports (Excel Export)">
+  Multiple report types available:
+  - **General User Report**: Complete listing with ID, name, roles, program, faculty, failures, status
+  - **Blocked Users Report**: Filter by month, shows reason, date, days blocked
+  - **Monthly Failures Report**: Statistics by month (forgot, lost, stolen)
+  - **Faculty Report**: Student-specific data by faculty
+</Accordion>
+
+<Accordion title="Bulk Data Import (CSV)">
+  Semester data management:
+  - Upload CSV file with student, employee, and contractor data
+  - System validates format
+  - Preview data before loading
+  - Confirm and process import
+  - Run at the beginning of each semester
+</Accordion>
+
+## Security Considerations
+
+### Authentication & Authorization
+
+- JWT tokens for administrative sessions
+- Role-based access control (RBAC)
+- Complete audit logs for all critical actions
+
+### Data Protection
+
+- Sensitive data encryption at rest
+- HTTPS mandatory for all communications
+- Input sanitization to prevent SQL injection
+- Rate limiting on authentication endpoints
+
+### Audit Trail
+
+- Complete record of administrative actions
+- Traceability of all unblocks
+- Failed access attempt logs
+- Immutable change history
+
+## Deployment Architecture
+
+The application is deployed as a modern web application:
+
+- **Frontend**: Static hosting (Vercel, Netlify, or similar)
+- **Backend**: Supabase cloud platform
+- **Database**: Managed PostgreSQL by Supabase
+- **CDN**: Global content delivery for optimal performance
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Clean Architecture" icon="layer-group" href="/development/clean-architecture">
+    Learn about the layer structure and dependency rules
+  </Card>
+  <Card title="Tech Stack" icon="stack-overflow" href="/development/tech-stack">
+    Explore the technologies and libraries used
+  </Card>
+  <Card title="Database Schema" icon="database" href="/database/schema">
+    View the complete database structure
+  </Card>
+  <Card title="Backend Setup" icon="code" href="/development/backend">
+    Review database connection and queries
+  </Card>
+</CardGroup>

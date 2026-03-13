@@ -1,0 +1,483 @@
+---
+title: Backend Setup
+description: Configure Supabase backend, database schema, and API client integration
+---
+
+## Backend Architecture
+
+The UCC Control de Acceso system uses **Supabase** as the backend-as-a-service platform, providing:
+
+- PostgreSQL database with real-time capabilities
+- Row Level Security (RLS) policies
+- Auto-generated REST APIs
+- Built-in authentication (if needed)
+
+## Supabase Configuration
+
+### Current Setup
+
+The application connects to Supabase using a centralized client:
+
+```javascript src/shared/lib/supabaseClient.js
+import { createClient } from '@supabase/supabase-js';
+
+const SUPABASE_URL = 'https://zhljlbuwpezwgkpwvkeu.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_wmcyhNSE68bZ9fW8v1PsMg_Va7sIKe-';
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+```
+
+<Warning>
+  The credentials shown above are for the development environment. **Never commit production credentials** to version control. Use environment variables instead.
+</Warning>
+
+### Using Environment Variables
+
+For better security, move credentials to environment variables:
+
+<Steps>
+  <Step title="Add to .env file">
+    ```bash .env
+    VITE_SUPABASE_URL=https://your-project.supabase.co
+    VITE_SUPABASE_ANON_KEY=your-anon-key-here
+    ```
+  </Step>
+
+  <Step title="Update supabaseClient.js">
+    ```javascript src/shared/lib/supabaseClient.js
+    import { createClient } from '@supabase/supabase-js';
+
+    const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+    const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      throw new Error('Missing Supabase environment variables');
+    }
+
+    export const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    ```
+  </Step>
+</Steps>
+
+## Database Schema
+
+### Core Tables
+
+The database consists of 10 main tables following a normalized structure:
+
+<AccordionGroup>
+  <Accordion title="usuarios - Main user table">
+    ```sql
+    CREATE TABLE usuarios (
+      id SERIAL PRIMARY KEY,
+      id_institucional VARCHAR(20) UNIQUE NOT NULL,
+      documento_identidad VARCHAR(20) UNIQUE NOT NULL,
+      nombre_completo VARCHAR(255) NOT NULL,
+      correo_institucional VARCHAR(255) UNIQUE,
+      acceso VARCHAR(20) DEFAULT 'permitido',  -- 'permitido' | 'bloqueado'
+      total_fallas INTEGER DEFAULT 0,          -- Counter 0-4
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    );
+    ```
+
+    - **id_institucional**: Unique ID assigned by UCC (e.g., "80123456")
+    - **acceso**: User access status (allowed/blocked)
+    - **total_fallas**: Failure counter (0-4, auto-blocks at 4)
+  </Accordion>
+
+  <Accordion title="roles - Role definitions">
+    ```sql
+    CREATE TABLE roles (
+      id SERIAL PRIMARY KEY,
+      nombre_rol VARCHAR(50) NOT NULL,  -- 'Estudiante', 'Empleado', 'Contratista'
+      descripcion TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+    ```
+
+    Predefined roles:
+    - **Estudiante** (Student)
+    - **Empleado** (Employee)
+    - **Contratista** (Contractor)
+  </Accordion>
+
+  <Accordion title="usuario_roles - Many-to-many relationship">
+    ```sql
+    CREATE TABLE usuario_roles (
+      usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+      rol_id INTEGER REFERENCES roles(id),
+      fecha_asignacion TIMESTAMP DEFAULT NOW(),
+      activo BOOLEAN DEFAULT true,
+      PRIMARY KEY (usuario_id, rol_id)
+    );
+    ```
+
+    Allows multi-role users (e.g., student who is also an employee).
+  </Accordion>
+
+  <Accordion title="info_estudiante - Student-specific data">
+    ```sql
+    CREATE TABLE info_estudiante (
+      usuario_id INTEGER PRIMARY KEY REFERENCES usuarios(id) ON DELETE CASCADE,
+      programa_academico VARCHAR(255),  -- e.g., "Ingeniería de Sistemas"
+      facultad VARCHAR(255),             -- e.g., "Facultad de Ingeniería"
+      campus_sede VARCHAR(100),          -- e.g., "Bogotá"
+      semestre INTEGER,
+      estado_academico VARCHAR(20) DEFAULT 'activo',
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="info_empleado - Employee-specific data">
+    ```sql
+    CREATE TABLE info_empleado (
+      usuario_id INTEGER PRIMARY KEY REFERENCES usuarios(id) ON DELETE CASCADE,
+      dependencia VARCHAR(255),          -- Department
+      cargo VARCHAR(255),                -- Position/Job title
+      tipo_contrato VARCHAR(50),         -- Contract type
+      fecha_ingreso DATE,                -- Start date
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="info_contratista - Contractor-specific data">
+    ```sql
+    CREATE TABLE info_contratista (
+      usuario_id INTEGER PRIMARY KEY REFERENCES usuarios(id) ON DELETE CASCADE,
+      empresa_proveedora VARCHAR(255),   -- Contracting company
+      nit_proveedor VARCHAR(50),         -- Tax ID
+      area_asignada VARCHAR(255),        -- Assigned area
+      fecha_inicio_contrato DATE,        -- Contract start
+      fecha_fin_contrato DATE,           -- Contract end
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+    ```
+  </Accordion>
+
+  <Accordion title="registro_fallas - Failure/incident log">
+    ```sql
+    CREATE TABLE registro_fallas (
+      id SERIAL PRIMARY KEY,
+      usuario_id INTEGER REFERENCES usuarios(id),
+      fecha_hora TIMESTAMP DEFAULT NOW(),
+      motivo VARCHAR(20),                -- 'olvido', 'perdida', 'robo'
+      observacion TEXT,
+      sede_registro VARCHAR(100),
+      vigilante_registro VARCHAR(255)
+    );
+    ```
+
+    **Motivo values:**
+    - `olvido` - Forgot card (increments counter, blocks at 4)
+    - `perdida` - Lost card (immediate block)
+    - `robo` - Stolen card (immediate block)
+  </Accordion>
+</AccordionGroup>
+
+### Database Setup Scripts
+
+The `database/supabase/` directory contains migration scripts in order:
+
+```
+database/supabase/
+├── 01_usuarios.sql           # Create usuarios table
+├── 02_roles.sql              # Create roles and usuario_roles tables
+├── 03_info_estudiante.sql    # Student info table
+├── 04_info_empleado.sql      # Employee info table
+├── 05_info_contratista.sql   # Contractor info table
+├── 06_triggers_roles.sql     # Auto-create role info records
+├── 07_fallas.sql             # Failures and blocks tables
+├── 08_rls_policies.sql       # Row Level Security policies
+└── 09_semestres.sql          # Semester management
+```
+
+<Steps>
+  <Step title="Access Supabase SQL Editor">
+    1. Go to your Supabase project dashboard
+    2. Navigate to **SQL Editor** in the left sidebar
+    3. Create a new query
+  </Step>
+
+  <Step title="Run migration scripts in order">
+    Copy and execute each SQL file content in order (01 through 09):
+
+    ```sql
+    -- Example: Run 01_usuarios.sql first
+    -- Then 02_roles.sql, and so on...
+    ```
+
+    <Note>
+      Scripts must be run in sequence as later tables depend on earlier ones.
+    </Note>
+  </Step>
+
+  <Step title="Verify tables were created">
+    ```sql
+    SELECT table_name 
+    FROM information_schema.tables 
+    WHERE table_schema = 'public';
+    ```
+
+    You should see all 10+ tables listed.
+  </Step>
+</Steps>
+
+## Repository Pattern
+
+The application uses the Repository pattern to abstract database operations:
+
+### Interface Definition
+
+```javascript src/modules/login/domain/repositories/AuthRepository.js
+/**
+ * Repository interface for authentication operations
+ * @abstract
+ */
+export class AuthRepository {
+  /**
+   * @param {string} idInstitucional
+   * @returns {Promise<User|null>}
+   */
+  async validateInstitutionalId(idInstitucional) {
+    throw new Error('Method not implemented');
+  }
+
+  /**
+   * @param {string} idInstitucional
+   * @returns {Promise<User|null>}
+   */
+  async getUserByInstitutionalId(idInstitucional) {
+    throw new Error('Method not implemented');
+  }
+}
+```
+
+### Supabase Implementation
+
+```javascript src/modules/login/infrastructure/repositories/AuthRepositoryImpl.js
+import { AuthRepository } from '../../domain/repositories/AuthRepository';
+import { User } from '../../domain/entities/User';
+import { supabase } from '../../../../shared/lib/supabaseClient';
+
+export class AuthRepositoryImpl extends AuthRepository {
+  
+  async validateInstitutionalId(idInstitucional) {
+    const { data, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('id_institucional', idInstitucional)
+      .single();
+
+    // PGRST116 = no rows found (user doesn't exist)
+    if (error || !data) return null;
+
+    return new User({
+      id: data.id,
+      idInstitucional: data.id_institucional,
+      documentoIdentidad: data.documento_identidad,
+      nombreCompleto: data.nombre_completo,
+      acceso: data.acceso,
+      totalFallas: data.total_fallas,
+    });
+  }
+
+  async getUserByInstitutionalId(idInstitucional) {
+    return this.validateInstitutionalId(idInstitucional);
+  }
+}
+```
+
+## Common Database Operations
+
+### Query User with All Roles
+
+```javascript
+const { data, error } = await supabase
+  .from('usuarios')
+  .select(`
+    *,
+    usuario_roles (
+      roles (
+        id,
+        nombre_rol
+      )
+    ),
+    info_estudiante (*),
+    info_empleado (*),
+    info_contratista (*)
+  `)
+  .eq('id_institucional', idInstitucional)
+  .single();
+```
+
+### Insert Failure Record
+
+```javascript
+const { error } = await supabase
+  .from('registro_fallas')
+  .insert({
+    usuario_id: userId,
+    motivo: 'olvido',  // or 'perdida', 'robo'
+    sede_registro: 'Bogotá',
+    observacion: 'Usuario olvidó carnet en casa'
+  });
+```
+
+### Update User Access Status
+
+```javascript
+const { error } = await supabase
+  .from('usuarios')
+  .update({ 
+    acceso: 'bloqueado',
+    total_fallas: 4,
+    updated_at: new Date().toISOString()
+  })
+  .eq('id', userId);
+```
+
+### Get Dashboard Statistics
+
+```javascript
+// Count users by access status
+const { data: stats } = await supabase
+  .from('usuarios')
+  .select('acceso, total_fallas', { count: 'exact' });
+
+// Users at risk (3 failures)
+const { data: atRisk } = await supabase
+  .from('usuarios')
+  .select('*')
+  .eq('total_fallas', 3)
+  .eq('acceso', 'permitido');
+```
+
+## Row Level Security (RLS)
+
+Supabase uses RLS policies to control data access. The `08_rls_policies.sql` script sets up:
+
+```sql
+-- Example: Allow public read access to usuarios table
+CREATE POLICY "Public usuarios read access"
+  ON usuarios
+  FOR SELECT
+  USING (true);
+
+-- Example: Admin-only write access
+CREATE POLICY "Admin usuarios write access"
+  ON usuarios
+  FOR ALL
+  USING (auth.role() = 'admin');
+```
+
+<Warning>
+  Review and adjust RLS policies according to your security requirements. The development policies may be too permissive for production.
+</Warning>
+
+## API Client Configuration
+
+For additional API calls beyond Supabase (if needed), configure axios:
+
+```javascript src/shared/lib/apiClient.js
+import axios from 'axios';
+
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3000',
+  timeout: 10000,
+  headers: {
+    'Content-Type': 'application/json',
+  }
+});
+
+// Request interceptor for adding auth tokens
+apiClient.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+// Response interceptor for error handling
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Redirect to login on unauthorized
+      window.location.href = '/';
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;
+```
+
+## Testing Database Connection
+
+Create a simple test component to verify Supabase connectivity:
+
+```jsx TestConnection.jsx
+import { useEffect, useState } from 'react';
+import { supabase } from '../shared/lib/supabaseClient';
+
+export const TestConnection = () => {
+  const [status, setStatus] = useState('Testing...');
+
+  useEffect(() => {
+    const testConnection = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .select('count')
+          .limit(1);
+        
+        if (error) throw error;
+        setStatus('✅ Connected successfully!');
+      } catch (err) {
+        setStatus(`❌ Connection failed: ${err.message}`);
+      }
+    };
+
+    testConnection();
+  }, []);
+
+  return <div className="p-4 text-center">{status}</div>;
+};
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Frontend Development" icon="paintbrush" href="/development/frontend">
+    Learn how to build UI components that interact with the database
+  </Card>
+  
+  <Card title="Deployment" icon="rocket" href="/development/deployment">
+    Deploy your application to production
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### "Missing Supabase environment variables"
+
+Ensure `.env` file exists with correct variable names prefixed with `VITE_`.
+
+### "PGRST116" or "Row not found" errors
+
+This is expected when querying for non-existent users. Handle gracefully in your code.
+
+### RLS policy blocking queries
+
+If queries fail unexpectedly, check RLS policies in Supabase dashboard under **Authentication > Policies**.
+
+### Connection timeout errors
+
+Verify your Supabase project is not paused (free tier pauses after inactivity). Visit the project dashboard to wake it up.

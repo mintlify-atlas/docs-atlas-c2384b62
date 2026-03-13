@@ -1,0 +1,435 @@
+---
+title: 'Table Reference'
+description: 'Detailed documentation of every table, column, and constraint in the UCC Access Control database'
+icon: 'table'
+---
+
+## Core Tables
+
+### usuarios
+
+**Purpose:** Central table storing all users in the system. Contains only identity and access control fields.
+
+<ParamField path="id" type="BIGINT" required>
+  Internal auto-incrementing primary key. Generated automatically.
+</ParamField>
+
+<ParamField path="id_institucional" type="VARCHAR(20)" required>
+  UCC-assigned institutional ID (e.g., `80100001`). **Must be unique**. Used as the stable foreign key across all relationships.
+</ParamField>
+
+<ParamField path="documento_identidad" type="VARCHAR(20)" required>
+  National identification document (Cédula de Ciudadanía). **Must be unique**.
+</ParamField>
+
+<ParamField path="nombre_completo" type="VARCHAR(150)" required>
+  User's full name as registered in university records.
+</ParamField>
+
+<ParamField path="acceso" type="estado_de_acceso" default="activo">
+  Access status: `activo` (can enter) or `bloqueado` (denied). Automatically set to `bloqueado` when `total_fallas` reaches 4.
+</ParamField>
+
+<ParamField path="total_fallas" type="INTEGER" default="0">
+  Cumulative failure count. Automatically recalculated by the `fallas` trigger. Ranges from 0 to 4+.
+</ParamField>
+
+#### Constraints
+
+```sql
+PRIMARY KEY (id)
+UNIQUE (id_institucional)
+UNIQUE (documento_identidad)
+```
+
+#### Example
+
+```sql
+INSERT INTO usuarios (id_institucional, documento_identidad, nombre_completo)
+VALUES ('80100001', '1234567890', 'Juan Diego Pérez Gómez');
+
+-- Result:
+-- id: 1 (auto-generated)
+-- acceso: activo (default)
+-- total_fallas: 0 (default)
+```
+
+---
+
+### roles
+
+**Purpose:** Catalog of available roles. Fixed data that persists across semesters.
+
+<ParamField path="id" type="BIGINT" required>
+  Role identifier. Auto-incrementing.
+</ParamField>
+
+<ParamField path="nombre_rol" type="VARCHAR(50)" required>
+  Role name: `Estudiante`, `Empleado`, or `Contratista`. **Must be unique**.
+</ParamField>
+
+<ParamField path="descripcion" type="TEXT">
+  Human-readable description of the role.
+</ParamField>
+
+#### Pre-populated Data
+
+```sql
+id | nombre_rol  | descripcion
+---+-------------+----------------------------------------------
+ 1 | Estudiante  | Usuario matriculado en un programa académico
+ 2 | Empleado    | Trabajador vinculado directamente a la UCC
+ 3 | Contratista | Proveedor externo con contrato activo
+```
+
+<Note>
+This table is **not cleared** during semester resets. It contains static reference data.
+</Note>
+
+---
+
+### usuario_roles
+
+**Purpose:** Junction table implementing the many-to-many relationship between users and roles.
+
+<ParamField path="id" type="BIGINT" required>
+  Primary key. Auto-incrementing.
+</ParamField>
+
+<ParamField path="id_institucional" type="VARCHAR(20)" required>
+  Foreign key to `usuarios.id_institucional`. References the stable institutional ID.
+</ParamField>
+
+<ParamField path="rol_id" type="BIGINT" required>
+  Foreign key to `roles.id`.
+</ParamField>
+
+#### Constraints
+
+```sql
+PRIMARY KEY (id)
+FOREIGN KEY (id_institucional) REFERENCES usuarios(id_institucional) ON DELETE CASCADE
+FOREIGN KEY (rol_id) REFERENCES roles(id)
+UNIQUE (id_institucional, rol_id)  -- Prevent duplicate role assignments
+```
+
+#### Automatic Management
+
+<Warning>
+**Never insert into this table manually.** Roles are assigned/revoked automatically by triggers when records are added/removed from info tables.
+</Warning>
+
+```sql
+-- Inserting a student record automatically creates a usuario_roles entry
+INSERT INTO info_estudiante (id_institucional, programa)
+VALUES ('80100001', 'Ingeniería de Sistemas');
+
+-- This trigger fires:
+-- INSERT INTO usuario_roles (id_institucional, rol_id)
+-- VALUES ('80100001', 1);  -- 1 = Estudiante
+```
+
+#### Example: Multi-Role User
+
+```sql
+-- User 80100003 is both a Student and an Employee
+SELECT * FROM usuario_roles WHERE id_institucional = '80100003';
+
+-- Result:
+-- id | id_institucional | rol_id
+-----+------------------+--------
+--  5 | 80100003         | 1       (Estudiante)
+--  6 | 80100003         | 2       (Empleado)
+```
+
+---
+
+## Role-Specific Information Tables
+
+### info_estudiante
+
+**Purpose:** Stores academic program for users with the Student role.
+
+<ParamField path="id" type="BIGINT" required>
+  Primary key. Auto-incrementing.
+</ParamField>
+
+<ParamField path="id_institucional" type="VARCHAR(20)" required>
+  Foreign key to `usuarios.id_institucional`. **Must be unique** (one student record per user).
+</ParamField>
+
+<ParamField path="programa" type="VARCHAR(150)" required>
+  Academic program name (e.g., "Ingeniería de Sistemas", "Derecho", "Medicina").
+</ParamField>
+
+#### Triggers
+
+- **ON INSERT**: Automatically assigns role `Estudiante` in `usuario_roles`
+- **ON DELETE**: Automatically revokes role `Estudiante` in `usuario_roles`
+
+#### Example
+
+```sql
+INSERT INTO info_estudiante (id_institucional, programa)
+VALUES ('80100001', 'Ingeniería de Sistemas');
+
+-- Trigger automatically executes:
+-- INSERT INTO usuario_roles (id_institucional, rol_id)
+-- VALUES ('80100001', 1);
+```
+
+---
+
+### info_empleado
+
+**Purpose:** Stores position and department for users with the Employee role.
+
+<ParamField path="id" type="BIGINT" required>
+  Primary key. Auto-incrementing.
+</ParamField>
+
+<ParamField path="id_institucional" type="VARCHAR(20)" required>
+  Foreign key to `usuarios.id_institucional`. **Must be unique**.
+</ParamField>
+
+<ParamField path="cargo" type="VARCHAR(150)" required>
+  Job title (e.g., "Coordinador de Tesorería", "Asistente Administrativo").
+</ParamField>
+
+<ParamField path="dependencia" type="VARCHAR(150)" required>
+  Department or area (e.g., "Área Financiera", "Secretaría Académica").
+</ParamField>
+
+#### Triggers
+
+- **ON INSERT**: Automatically assigns role `Empleado`
+- **ON DELETE**: Automatically revokes role `Empleado`
+
+---
+
+### info_contratista
+
+**Purpose:** Stores company information for users with the Contractor role.
+
+<ParamField path="id" type="BIGINT" required>
+  Primary key. Auto-incrementing.
+</ParamField>
+
+<ParamField path="id_institucional" type="VARCHAR(20)" required>
+  Foreign key to `usuarios.id_institucional`. **Must be unique**.
+</ParamField>
+
+<ParamField path="empresa" type="VARCHAR(200)" required>
+  Contractor's company name (e.g., "Aseo Total S.A.S.", "Sistemas y Redes Ltda").
+</ParamField>
+
+#### Triggers
+
+- **ON INSERT**: Automatically assigns role `Contratista`
+- **ON DELETE**: Automatically revokes role `Contratista`
+
+---
+
+## Incident Management
+
+### fallas
+
+**Purpose:** Records each instance of a user entering without their ID card.
+
+<ParamField path="id" type="BIGINT" required>
+  Primary key. Auto-incrementing.
+</ParamField>
+
+<ParamField path="id_institucional" type="VARCHAR(20)" required>
+  Foreign key to `usuarios.id_institucional`.
+</ParamField>
+
+<ParamField path="fecha_hora" type="TIMESTAMPTZ" default="NOW()">
+  Timestamp of the incident (with timezone).
+</ParamField>
+
+<ParamField path="motivo" type="VARCHAR(10)" required>
+  Reason: `olvido` (forgot card) or `perdida` (lost card).
+</ParamField>
+
+#### Constraints
+
+```sql
+CHECK (motivo IN ('olvido', 'perdida'))
+```
+
+#### Trigger Behavior
+
+<Steps>
+  <Step title="User reports failure">
+    A new row is inserted into `fallas` with `motivo = 'olvido'` or `'perdida'`
+  </Step>
+  <Step title="Trigger recounts failures">
+    The `fn_actualizar_fallas()` function counts all failures for that user
+  </Step>
+  <Step title="Update user record">
+    `usuarios.total_fallas` is updated with the new count
+  </Step>
+  <Step title="Auto-block at 4">
+    If `total_fallas >= 4`, `usuarios.acceso` is set to `'bloqueado'`
+  </Step>
+</Steps>
+
+#### Example: Automatic Blocking
+
+```sql
+-- User has 3 failures already
+SELECT id_institucional, total_fallas, acceso FROM usuarios WHERE id_institucional = '80100001';
+-- Result: 80100001 | 3 | activo
+
+-- User reports 4th failure
+INSERT INTO fallas (id_institucional, motivo) VALUES ('80100001', 'olvido');
+
+-- Trigger fires and updates:
+SELECT id_institucional, total_fallas, acceso FROM usuarios WHERE id_institucional = '80100001';
+-- Result: 80100001 | 4 | bloqueado  ← Automatically blocked!
+```
+
+---
+
+## Semester Management
+
+### semestres
+
+**Purpose:** Tracks academic semesters and identifies which is currently active.
+
+<ParamField path="id" type="BIGSERIAL" required>
+  Primary key. Auto-incrementing.
+</ParamField>
+
+<ParamField path="nombre" type="TEXT" required>
+  Semester name (e.g., `2026-1`, `2026-2`).
+</ParamField>
+
+<ParamField path="fecha_inicio" type="DATE" required>
+  Semester start date.
+</ParamField>
+
+<ParamField path="fecha_fin" type="DATE" required>
+  Semester end date. **Must be after `fecha_inicio`**.
+</ParamField>
+
+<ParamField path="activo" type="BOOLEAN" default="true">
+  Whether this semester is currently active. **Only one semester can be active at a time** (enforced by unique index).
+</ParamField>
+
+<ParamField path="creado_en" type="TIMESTAMPTZ" default="NOW()">
+  Timestamp when the semester record was created.
+</ParamField>
+
+#### Constraints
+
+```sql
+CHECK (fecha_fin > fecha_inicio)
+UNIQUE INDEX ON (activo) WHERE activo = true  -- Only one active semester
+```
+
+#### Example
+
+```sql
+-- Insert a new semester
+INSERT INTO semestres (nombre, fecha_inicio, fecha_fin)
+VALUES ('2026-1', '2026-01-19', '2026-06-14');
+
+-- Mark it as active (and deactivate previous semesters)
+UPDATE semestres SET activo = false WHERE nombre != '2026-1';
+UPDATE semestres SET activo = true WHERE nombre = '2026-1';
+
+-- Query the active semester
+SELECT nombre, fecha_inicio, fecha_fin
+FROM semestres
+WHERE activo = true;
+-- Result: 2026-1 | 2026-01-19 | 2026-06-14
+```
+
+---
+
+## Common Queries
+
+### Get User with All Roles
+
+```sql
+SELECT
+    u.id_institucional,
+    u.nombre_completo,
+    u.acceso,
+    u.total_fallas,
+    STRING_AGG(r.nombre_rol, ', ' ORDER BY r.nombre_rol) AS roles
+FROM usuarios u
+LEFT JOIN usuario_roles ur ON ur.id_institucional = u.id_institucional
+LEFT JOIN roles r ON r.id = ur.rol_id
+WHERE u.id_institucional = '80100003'
+GROUP BY u.id_institucional, u.nombre_completo, u.acceso, u.total_fallas;
+
+-- Result:
+-- 80100003 | Carlos Andrés Martínez Ruiz | activo | 1 | Empleado, Estudiante
+```
+
+### Get User with Role-Specific Info
+
+```sql
+SELECT
+    u.id_institucional,
+    u.nombre_completo,
+    u.acceso,
+    u.total_fallas,
+    ie.programa AS programa_estudiante,
+    emp.cargo AS cargo_empleado,
+    emp.dependencia AS dependencia_empleado,
+    ic.empresa AS empresa_contratista
+FROM usuarios u
+LEFT JOIN info_estudiante ie ON ie.id_institucional = u.id_institucional
+LEFT JOIN info_empleado emp ON emp.id_institucional = u.id_institucional
+LEFT JOIN info_contratista ic ON ic.id_institucional = u.id_institucional
+WHERE u.id_institucional = '80100003';
+```
+
+### Get Recent Failures for a User
+
+```sql
+SELECT
+    fecha_hora,
+    motivo
+FROM fallas
+WHERE id_institucional = '80100001'
+ORDER BY fecha_hora DESC
+LIMIT 10;
+```
+
+### Count Users by Access Status
+
+```sql
+SELECT
+    acceso,
+    COUNT(*) AS total
+FROM usuarios
+GROUP BY acceso;
+
+-- Result:
+-- activo    | 245
+-- bloqueado | 12
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Schema Overview" icon="sitemap" href="/database/schema">
+    ER diagram and design principles
+  </Card>
+  <Card title="Installation" icon="rocket" href="/database/installation">
+    Set up the database in Supabase
+  </Card>
+  <Card title="Migrations" icon="rotate" href="/database/migrations">
+    Semester data refresh procedures
+  </Card>
+  <Card title="Backend Setup" icon="code" href="/development/backend">
+    Query the database via Supabase client
+  </Card>
+</CardGroup>

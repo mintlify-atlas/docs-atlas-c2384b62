@@ -1,0 +1,537 @@
+---
+title: "Clean Architecture"
+description: "Understanding the Clean Architecture implementation in UCC Control de Acceso"
+icon: "layer-group"
+---
+
+## What is Clean Architecture?
+
+Clean Architecture is a software design pattern that separates concerns by dividing the application into layers. Each layer has specific responsibilities and follows strict dependency rules.
+
+<Info>
+  **The Dependency Rule**: Source code dependencies must only point **inward**. Inner layers should never know about outer layers.
+</Info>
+
+## Benefits
+
+The Clean Architecture approach provides several key advantages:
+
+<CardGroup cols={2}>
+  <Card title="Independent of Frameworks" icon="puzzle-piece">
+    Business logic doesn't depend on React, Supabase, or any external library
+  </Card>
+  <Card title="Testable" icon="flask">
+    Business rules can be tested without UI, database, or external services
+  </Card>
+  <Card title="Independent of UI" icon="paintbrush">
+    The UI can change without affecting business logic
+  </Card>
+  <Card title="Independent of Database" icon="database">
+    Business logic is isolated from database implementation details
+  </Card>
+</CardGroup>
+
+## Layer Structure
+
+Each module in the application follows this four-layer structure:
+
+### 1. Domain Layer (Core Business Logic)
+
+The **innermost layer** containing pure business logic with no external dependencies.
+
+**Location**: `src/modules/{module}/domain/`
+
+<Tabs>
+  <Tab title="Entities">
+    ```javascript
+    // src/modules/login/domain/entities/User.js
+    export class User {
+      constructor(id, institutionalId, fullName, email, status, totalFailures) {
+        this.id = id;
+        this.institutionalId = institutionalId;
+        this.fullName = fullName;
+        this.email = email;
+        this.status = status; // 'active' or 'blocked'
+        this.totalFailures = totalFailures;
+      }
+
+      isBlocked() {
+        return this.status === 'blocked';
+      }
+
+      isAtRisk() {
+        return this.totalFailures >= 3;
+      }
+    }
+    ```
+    **Purpose**: Represent core business concepts with their properties and behavior.
+  </Tab>
+  
+  <Tab title="Use Cases">
+    ```javascript
+    // src/modules/login/domain/usecases/ValidateInstitutionalIdUseCase.js
+    export class ValidateInstitutionalIdUseCase {
+      constructor(authRepository) {
+        this.authRepository = authRepository;
+      }
+
+      async execute(idInstitucional) {
+        // Validate format
+        if (!idInstitucional || idInstitucional.trim() === '') {
+          return {
+            success: false,
+            error: 'El ID institucional es requerido'
+          };
+        }
+
+        // Validate numeric
+        if (!/^\d+$/.test(idInstitucional)) {
+          return {
+            success: false,
+            error: 'El ID institucional debe contener solo números'
+          };
+        }
+
+        // Fetch user from repository
+        const user = await this.authRepository.validateInstitutionalId(idInstitucional);
+
+        if (!user) {
+          return {
+            success: false,
+            error: 'ID institucional no encontrado'
+          };
+        }
+
+        // Check if blocked
+        if (user.isBlocked()) {
+          return {
+            success: false,
+            error: 'Tu acceso está bloqueado.'
+          };
+        }
+
+        return {
+          success: true,
+          user
+        };
+      }
+    }
+    ```
+    **Purpose**: Implement business use cases. Each use case represents one user action.
+  </Tab>
+  
+  <Tab title="Repositories">
+    ```javascript
+    // src/modules/login/domain/repositories/AuthRepository.js
+    export class AuthRepository {
+      /**
+       * Validate if an institutional ID exists
+       * @param {string} institutionalId
+       * @returns {Promise<User|null>}
+       */
+      async validateInstitutionalId(institutionalId) {
+        throw new Error('Method not implemented');
+      }
+    }
+    ```
+    **Purpose**: Define interfaces (contracts) for data access. Implementation is in Infrastructure layer.
+  </Tab>
+</Tabs>
+
+<Note>
+  The Domain layer has **zero external dependencies**. It only uses plain JavaScript/ES6 features.
+</Note>
+
+### 2. Infrastructure Layer (External Integrations)
+
+Contains implementations that interact with external systems and services.
+
+**Location**: `src/modules/{module}/infrastructure/`
+
+<Tabs>
+  <Tab title="Repositories">
+    ```javascript
+    // src/modules/login/infrastructure/repositories/SupabaseAuthRepository.js
+    import { supabase } from '@/shared/lib/supabaseClient';
+    import { User } from '../../domain/entities/User';
+    import { AuthRepository } from '../../domain/repositories/AuthRepository';
+
+    export class SupabaseAuthRepository extends AuthRepository {
+      async validateInstitutionalId(institutionalId) {
+        const { data, error } = await supabase
+          .from('usuarios')
+          .select('*')
+          .eq('id_institucional', institutionalId)
+          .single();
+
+        if (error || !data) {
+          return null;
+        }
+
+        return new User(
+          data.id,
+          data.id_institucional,
+          data.nombre_completo,
+          data.correo_institucional,
+          data.estado_general,
+          data.total_fallas
+        );
+      }
+    }
+    ```
+    **Purpose**: Implement repository interfaces using actual data sources (Supabase, APIs, etc.)
+  </Tab>
+  
+  <Tab title="API Clients">
+    ```javascript
+    // src/modules/admin/infrastructure/api/ReportsApiClient.js
+    import { supabase } from '@/shared/lib/supabaseClient';
+
+    export class ReportsApiClient {
+      async getMonthlyStatistics(month, year) {
+        const { data, error } = await supabase
+          .rpc('get_monthly_statistics', { 
+            p_month: month, 
+            p_year: year 
+          });
+
+        if (error) throw error;
+        return data;
+      }
+
+      async exportToExcel(reportType) {
+        // Implementation for Excel export
+      }
+    }
+    ```
+    **Purpose**: Handle HTTP requests and external API communications.
+  </Tab>
+</Tabs>
+
+<Warning>
+  Infrastructure layer depends on Domain layer but **never** the other way around.
+</Warning>
+
+### 3. Application Layer (Application Logic)
+
+Coordinates between Domain and Presentation layers, managing application-specific logic.
+
+**Location**: `src/modules/{module}/application/`
+
+<Tabs>
+  <Tab title="Hooks">
+    ```javascript
+    // src/modules/login/application/hooks/useLogin.js
+    import { useState } from 'react';
+    import { useNavigate } from 'react-router-dom';
+    import { ValidateInstitutionalIdUseCase } from '../../domain/usecases/ValidateInstitutionalIdUseCase';
+    import { SupabaseAuthRepository } from '../../infrastructure/repositories/SupabaseAuthRepository';
+
+    export const useLogin = () => {
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const navigate = useNavigate();
+
+      const authRepository = new SupabaseAuthRepository();
+      const validateUseCase = new ValidateInstitutionalIdUseCase(authRepository);
+
+      const validateId = async (institutionalId) => {
+        setLoading(true);
+        setError(null);
+
+        const result = await validateUseCase.execute(institutionalId);
+
+        if (result.success) {
+          // Navigate to user profile
+          navigate(`/user/${result.user.institutionalId}`);
+        } else {
+          setError(result.error);
+        }
+
+        setLoading(false);
+      };
+
+      return {
+        validateId,
+        loading,
+        error
+      };
+    };
+    ```
+    **Purpose**: React hooks that connect UI components to use cases, managing state and side effects.
+  </Tab>
+</Tabs>
+
+### 4. Presentation Layer (UI Components)
+
+The **outermost layer** containing UI components and pages.
+
+**Location**: `src/modules/{module}/presentation/`
+
+<Tabs>
+  <Tab title="Pages">
+    ```jsx
+    // src/modules/login/presentation/pages/LoginPage.jsx
+    import { useState } from 'react';
+    import { useLogin } from '../../application/hooks/useLogin';
+    import { LoginForm } from '../components/LoginForm';
+
+    export const LoginPage = () => {
+      const { validateId, loading, error } = useLogin();
+
+      return (
+        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+          <div className="max-w-md w-full">
+            <img 
+              src="/logo-ucc.png" 
+              alt="UCC Logo" 
+              className="mx-auto mb-8"
+            />
+            <LoginForm 
+              onSubmit={validateId}
+              loading={loading}
+              error={error}
+            />
+          </div>
+        </div>
+      );
+    };
+    ```
+  </Tab>
+  
+  <Tab title="Components">
+    ```jsx
+    // src/modules/login/presentation/components/LoginForm.jsx
+    import { useState } from 'react';
+
+    export const LoginForm = ({ onSubmit, loading, error }) => {
+      const [idInstitucional, setIdInstitucional] = useState('');
+
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        onSubmit(idInstitucional);
+      };
+
+      return (
+        <form onSubmit={handleSubmit} className="bg-white p-8 rounded-lg shadow">
+          <h2 className="text-2xl font-bold text-center mb-6 text-ucc-azul-primary">
+            Ingrese su ID Institucional
+          </h2>
+
+          <input
+            type="text"
+            value={idInstitucional}
+            onChange={(e) => setIdInstitucional(e.target.value)}
+            placeholder="Ejemplo: 80123456"
+            className="w-full px-4 py-3 border rounded-lg"
+            disabled={loading}
+          />
+
+          {error && (
+            <p className="text-red-600 text-sm mt-2">{error}</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full mt-4 bg-ucc-naranja-primary text-white py-3 rounded-lg"
+          >
+            {loading ? 'Validando...' : 'INGRESAR'}
+          </button>
+        </form>
+      );
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Module Structure Example
+
+Here's how the login module is organized following Clean Architecture:
+
+```
+src/modules/login/
+├── domain/                          # ⭐ CORE (no dependencies)
+│   ├── entities/
+│   │   └── User.js                 # User entity
+│   ├── repositories/
+│   │   └── AuthRepository.js       # Repository interface
+│   └── usecases/
+│       └── ValidateInstitutionalIdUseCase.js
+│
+├── infrastructure/                  # 🔌 External integrations
+│   ├── api/
+│   │   └── apiClient.js            # HTTP client
+│   └── repositories/
+│       └── SupabaseAuthRepository.js # Repository implementation
+│
+├── application/                     # 🎯 Application logic
+│   └── hooks/
+│       └── useLogin.js             # React hook
+│
+└── presentation/                    # 🎨 UI layer
+    ├── components/
+    │   └── LoginForm.jsx           # Form component
+    └── pages/
+        └── LoginPage.jsx           # Page component
+```
+
+## Dependency Flow
+
+The dependency flow always points **inward**:
+
+```
+Presentation → Application → Infrastructure → Domain
+     ↓              ↓              ↓            ↓
+  (Pages)      (Hooks)      (Repositories)  (Use Cases)
+  (Components)              (API Clients)   (Entities)
+```
+
+<Check>
+  **Domain** never imports from any other layer
+</Check>
+
+<Check>
+  **Infrastructure** implements interfaces defined in Domain
+</Check>
+
+<Check>
+  **Application** orchestrates Domain and Infrastructure
+</Check>
+
+<Check>
+  **Presentation** only knows about Application and displays data
+</Check>
+
+## Current Modules
+
+The system currently implements three main modules:
+
+<AccordionGroup>
+  <Accordion title="Login Module" icon="right-to-bracket">
+    **Purpose**: User authentication and ID validation
+    
+    **Use Cases**:
+    - ValidateInstitutionalIdUseCase
+    
+    **Entities**:
+    - User
+    
+    **Repositories**:
+    - AuthRepository (interface)
+    - SupabaseAuthRepository (implementation)
+  </Accordion>
+
+  <Accordion title="User Profile Module" icon="user">
+    **Purpose**: Display user information and handle failure registration
+    
+    **Use Cases**:
+    - GetUserProfileUseCase
+    - RegisterFailureUseCase
+    
+    **Entities**:
+    - UserProfile
+    - Failure
+    
+    **Repositories**:
+    - UserRepository (interface)
+    - SupabaseUserRepository (implementation)
+  </Accordion>
+
+  <Accordion title="Admin Module" icon="shield-halved">
+    **Purpose**: Administrative functions, reporting, user management
+    
+    **Use Cases**:
+    - GetDashboardStatisticsUseCase
+    - UnblockUserUseCase
+    - ExportReportUseCase
+    - ImportUsersFromCSVUseCase
+    
+    **Entities**:
+    - Administrator
+    - Report
+    
+    **Repositories**:
+    - AdminRepository (interface)
+    - SupabaseAdminRepository (implementation)
+  </Accordion>
+</AccordionGroup>
+
+## Testing Strategy
+
+Clean Architecture makes testing straightforward:
+
+### Unit Tests (Domain Layer)
+
+```javascript
+// tests/domain/usecases/ValidateInstitutionalIdUseCase.test.js
+import { ValidateInstitutionalIdUseCase } from '@/modules/login/domain/usecases/ValidateInstitutionalIdUseCase';
+
+describe('ValidateInstitutionalIdUseCase', () => {
+  let useCase;
+  let mockRepository;
+
+  beforeEach(() => {
+    mockRepository = {
+      validateInstitutionalId: jest.fn()
+    };
+    useCase = new ValidateInstitutionalIdUseCase(mockRepository);
+  });
+
+  it('should return error for empty ID', async () => {
+    const result = await useCase.execute('');
+    expect(result.success).toBe(false);
+    expect(result.error).toBe('El ID institucional es requerido');
+  });
+
+  it('should return error for non-numeric ID', async () => {
+    const result = await useCase.execute('ABC123');
+    expect(result.success).toBe(false);
+  });
+
+  it('should return user for valid ID', async () => {
+    const mockUser = { id: 1, institutionalId: '80123456' };
+    mockRepository.validateInstitutionalId.mockResolvedValue(mockUser);
+
+    const result = await useCase.execute('80123456');
+    expect(result.success).toBe(true);
+    expect(result.user).toBe(mockUser);
+  });
+});
+```
+
+### Integration Tests (Infrastructure Layer)
+
+Test repository implementations with actual Supabase connections.
+
+### UI Tests (Presentation Layer)
+
+Use React Testing Library to test components in isolation.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Keep Domain Pure" icon="gem">
+    No external imports in domain layer. Use only plain JavaScript.
+  </Card>
+  <Card title="Use Dependency Injection" icon="syringe">
+    Pass dependencies through constructors for easy testing.
+  </Card>
+  <Card title="Define Interfaces" icon="file-contract">
+    Create repository interfaces in Domain, implement in Infrastructure.
+  </Card>
+  <Card title="Single Responsibility" icon="bullseye">
+    Each use case should do one thing and do it well.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Tech Stack" icon="stack-overflow" href="/development/tech-stack">
+    Explore the technologies used in each layer
+  </Card>
+  <Card title="Backend Guide" icon="code" href="/development/backend">
+    Learn about database queries and API setup
+  </Card>
+</CardGroup>

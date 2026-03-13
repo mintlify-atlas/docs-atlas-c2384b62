@@ -1,0 +1,446 @@
+---
+title: Frontend Development
+description: Guide to developing frontend features using React, Tailwind CSS, and Clean Architecture
+---
+
+## Architecture Overview
+
+The UCC Control de Acceso frontend follows **Clean Architecture** principles with clear separation of concerns across four layers:
+
+```
+src/modules/<module-name>/
+├── domain/              # Business logic (pure, no dependencies)
+│   ├── entities/        # Domain entities (User, Role, etc.)
+│   ├── repositories/    # Repository interfaces
+│   └── usecases/        # Business use cases
+├── infrastructure/      # External implementations
+│   ├── api/            # HTTP clients
+│   └── repositories/   # Repository implementations
+├── application/         # Application logic
+│   └── hooks/          # React custom hooks
+└── presentation/        # UI layer
+    ├── components/     # React components
+    └── pages/          # Page/view components
+```
+
+## Technology Stack
+
+### Core Technologies
+
+- **React 18.2.0** - UI framework with functional components and hooks
+- **Vite 5.0.8** - Lightning-fast build tool with HMR
+- **React Router DOM 6.20.0** - Client-side routing
+- **Tailwind CSS 3.3.6** - Utility-first CSS framework
+- **JavaScript (ES6+)** - No TypeScript (per project requirements)
+
+### Supporting Libraries
+
+- **Axios 1.6.2** - HTTP client for API calls
+- **Recharts 3.7.0** - Charting library for admin dashboard
+- **XLSX 0.18.5** - Excel file generation and export
+
+## Tailwind CSS Configuration
+
+### Corporate Colors
+
+The system uses Universidad Cooperativa de Colombia's official brand colors:
+
+```javascript tailwind.config.js
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,jsx,ts,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        'ucc-azul': {
+          primary: '#003DA5',  // Primary institutional blue
+          dark: '#002870',     // Dark blue
+          light: '#4A7BBA',    // Light blue
+        },
+        'ucc-naranja': {
+          primary: '#FF6B35',  // Primary institutional orange
+          light: '#FF8C5F',    // Light orange
+          dark: '#E55A2B',     // Dark orange
+        }
+      },
+      fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+      }
+    },
+  },
+  plugins: [],
+}
+```
+
+### Using Corporate Colors
+
+```jsx
+// Buttons with UCC orange
+<button className="bg-ucc-naranja-primary hover:bg-ucc-naranja-dark text-white">
+  INGRESAR
+</button>
+
+// Headers with UCC blue
+<div className="bg-ucc-azul-primary text-white">
+  <h1>Panel Administrativo</h1>
+</div>
+
+// Gradients
+<div className="bg-gradient-to-r from-ucc-azul-primary to-ucc-azul-light">
+  Content
+</div>
+```
+
+## Module Structure
+
+### Login Module Example
+
+The login module demonstrates the Clean Architecture implementation:
+
+<Steps>
+  <Step title="Domain Layer - Use Cases">
+    Business logic is pure and framework-agnostic:
+
+    ```javascript src/modules/login/domain/usecases/ValidateInstitutionalIdUseCase.js
+    export class ValidateInstitutionalIdUseCase {
+      constructor(authRepository) {
+        this.authRepository = authRepository;
+      }
+
+      async execute(idInstitucional) {
+        // Pure business logic
+        if (!idInstitucional || idInstitucional.trim() === '') {
+          return { success: false, error: 'ID institucional requerido' };
+        }
+
+        const user = await this.authRepository.validateInstitutionalId(idInstitucional);
+        
+        if (!user) {
+          return { success: false, error: 'ID no encontrado' };
+        }
+
+        return { success: true, user };
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Domain Layer - Entities">
+    Domain entities represent core business objects:
+
+    ```javascript src/modules/login/domain/entities/User.js
+    export class User {
+      constructor({ id, idInstitucional, nombreCompleto, acceso, totalFallas }) {
+        this.id = id;
+        this.idInstitucional = idInstitucional;
+        this.nombreCompleto = nombreCompleto;
+        this.acceso = acceso;              // 'permitido' | 'bloqueado'
+        this.totalFallas = totalFallas;    // Failure counter (0-4)
+      }
+    }
+    ```
+  </Step>
+
+  <Step title="Application Layer - Custom Hooks">
+    React hooks connect domain logic to UI:
+
+    ```javascript src/modules/login/application/hooks/useLogin.js
+    import { useState } from 'react';
+    import { ValidateInstitutionalIdUseCase } from '../../domain/usecases/ValidateInstitutionalIdUseCase';
+    import { AuthRepositoryImpl } from '../../infrastructure/repositories/AuthRepositoryImpl';
+
+    export const useLogin = () => {
+      const [loading, setLoading] = useState(false);
+      const [error, setError] = useState(null);
+      const [user, setUser] = useState(null);
+
+      const authRepository = new AuthRepositoryImpl();
+      const validateIdUseCase = new ValidateInstitutionalIdUseCase(authRepository);
+
+      const validateId = async (idInstitucional) => {
+        setLoading(true);
+        setError(null);
+
+        try {
+          const result = await validateIdUseCase.execute(idInstitucional);
+          
+          if (result.success) {
+            setUser(result.user);
+            return { success: true, user: result.user };
+          } else {
+            setError(result.error);
+            return { success: false, error: result.error };
+          }
+        } catch (err) {
+          const errorMessage = 'Error inesperado al validar el ID';
+          setError(errorMessage);
+          return { success: false, error: errorMessage };
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return { loading, error, user, validateId };
+    };
+    ```
+  </Step>
+
+  <Step title="Presentation Layer - Components">
+    React components handle UI rendering:
+
+    ```jsx src/modules/login/presentation/pages/LoginPage.jsx
+    import { useState } from 'react';
+    import { useNavigate } from 'react-router-dom';
+    import { useLogin } from '../../application/hooks/useLogin';
+
+    export const LoginPage = () => {
+      const [idInput, setIdInput] = useState('');
+      const { loading, error, validateId } = useLogin();
+      const navigate = useNavigate();
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        const result = await validateId(idInput);
+        
+        if (result.success) {
+          navigate('/usuario', { state: { user: result.user } });
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-ucc-azul-primary to-ucc-azul-light">
+          <div className="flex items-center justify-center min-h-screen p-4">
+            <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+              {/* Logo */}
+              <div className="text-center mb-8">
+                <img src="/logo-ucc.png" alt="UCC" className="h-20 mx-auto" />
+              </div>
+
+              {/* Form */}
+              <form onSubmit={handleSubmit} className="space-y-6">
+                <div>
+                  <label className="block text-gray-700 text-sm font-semibold mb-2">
+                    Ingrese su ID Institucional
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={idInput}
+                    onChange={(e) => setIdInput(e.target.value.replace(/\D/g, ''))}
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-ucc-azul-primary"
+                    placeholder="80123456"
+                    disabled={loading}
+                  />
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading || !idInput}
+                  className="w-full bg-ucc-naranja-primary hover:bg-ucc-naranja-dark text-white font-bold py-3 px-4 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loading ? 'Validando...' : 'INGRESAR'}
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      );
+    };
+    ```
+  </Step>
+</Steps>
+
+## Component Patterns
+
+### Functional Components Only
+
+The project uses functional components with hooks (no class components):
+
+```jsx
+// ✅ Good - Functional component
+export const MyComponent = ({ title, onAction }) => {
+  const [state, setState] = useState(false);
+  
+  return <div>{title}</div>;
+};
+
+// ❌ Avoid - Class component
+export class MyComponent extends React.Component {
+  // Not used in this project
+}
+```
+
+### Custom Hooks
+
+Custom hooks encapsulate reusable logic:
+
+```javascript
+// Example: useAdminDashboard hook
+export const useAdminDashboard = () => {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const adminRepo = new AdminRepositoryImpl();
+
+  const loadStats = async () => {
+    setLoading(true);
+    const data = await adminRepo.getStats();
+    setStats(data);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadStats();
+  }, []);
+
+  return { stats, loading, refresh: loadStats };
+};
+```
+
+## Routing
+
+React Router DOM handles navigation:
+
+```jsx src/App.jsx
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { LoginPage } from './modules/login/presentation/pages/LoginPage';
+import { UserProfilePage } from './modules/user-profile/presentation/pages/UserProfilePage';
+import { AdminPage } from './modules/admin/presentation/pages/AdminPage';
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LoginPage />} />
+        <Route path="/usuario" element={<UserProfilePage />} />
+        <Route path="/admin" element={<AdminPage />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+export default App;
+```
+
+## Styling Guidelines
+
+### Utility-First Approach
+
+Use Tailwind utility classes directly:
+
+```jsx
+// ✅ Preferred - Inline utilities
+<div className="flex items-center justify-between p-4 bg-white rounded-lg shadow">
+  <h2 className="text-xl font-bold text-gray-800">Title</h2>
+  <button className="px-4 py-2 bg-ucc-naranja-primary text-white rounded">
+    Action
+  </button>
+</div>
+
+// ⚠️ Use sparingly - Custom CSS
+// Only for truly reusable component styles
+```
+
+### Responsive Design
+
+Use Tailwind's responsive prefixes:
+
+```jsx
+<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {/* Responsive grid: 1 col mobile, 2 cols tablet, 3 cols desktop */}
+</div>
+
+<h1 className="text-2xl md:text-3xl lg:text-4xl font-bold">
+  {/* Responsive typography */}
+</h1>
+```
+
+## Code Conventions
+
+### File Naming
+
+- **Components**: PascalCase - `LoginPage.jsx`, `StatCard.jsx`
+- **Hooks**: camelCase with `use` prefix - `useLogin.js`, `useAdminDashboard.js`
+- **Utilities**: camelCase - `formatDate.js`, `exportToExcel.js`
+- **Use Cases**: PascalCase - `ValidateInstitutionalIdUseCase.js`
+
+### Import Organization
+
+Organize imports in this order:
+
+```javascript
+// 1. External libraries
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+// 2. Internal modules (domain, infrastructure)
+import { ValidateIdUseCase } from '../../domain/usecases/ValidateIdUseCase';
+import { AuthRepositoryImpl } from '../../infrastructure/repositories/AuthRepositoryImpl';
+
+// 3. Relative imports (components, utils)
+import { Button } from '../components/Button';
+import { formatDate } from '../utils/formatDate';
+```
+
+### JSDoc Comments
+
+Add JSDoc comments to important functions:
+
+```javascript
+/**
+ * Validates institutional ID and returns user data
+ * @param {string} idInstitucional - The institutional ID (e.g., "80123456")
+ * @returns {Promise<{success: boolean, user?: User, error?: string}>}
+ */
+async function validateId(idInstitucional) {
+  // Implementation
+}
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always use named exports for components">
+    ```javascript
+    // ✅ Good - Named export
+    export const LoginPage = () => { ... };
+    
+    // ❌ Avoid - Default export (unless single export)
+    export default LoginPage;
+    ```
+  </Accordion>
+
+  <Accordion title="Keep components small and focused">
+    If a component grows beyond 200 lines, consider splitting it into smaller components.
+  </Accordion>
+
+  <Accordion title="Use custom hooks for complex logic">
+    Extract complex state management and side effects into custom hooks for reusability and testing.
+  </Accordion>
+
+  <Accordion title="Follow Clean Architecture boundaries">
+    - Domain layer should never import from presentation
+    - Use cases should be framework-agnostic
+    - Keep dependencies pointing inward
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Backend Setup" icon="database" href="/development/backend">
+    Configure Supabase and database connections
+  </Card>
+  
+  <Card title="Deployment" icon="rocket" href="/development/deployment">
+    Build and deploy to production
+  </Card>
+</CardGroup>

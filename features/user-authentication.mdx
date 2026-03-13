@@ -1,0 +1,216 @@
+---
+title: User Authentication
+description: How institutional ID login works in the UCC Access Control System
+icon: key
+---
+
+## Overview
+
+The UCC Access Control System uses a simple, single-field authentication method based on **institutional ID numbers**. Users log in by entering their unique ID assigned by the university (e.g., `80123456`).
+
+<Note>
+This system is **only used when users DO NOT have their physical TIC card**. It does not register normal daily access.
+</Note>
+
+## Authentication Flow
+
+The authentication process follows these steps:
+
+<Steps>
+  <Step title="User enters institutional ID">
+    The login screen presents a single input field for the institutional ID number.
+  </Step>
+  <Step title="Format validation">
+    The system validates that the ID contains only numeric characters.
+  </Step>
+  <Step title="Database lookup">
+    The system queries the database to find a matching user record.
+  </Step>
+  <Step title="Status verification">
+    The system checks if the user account is active or blocked.
+  </Step>
+  <Step title="Grant or deny access">
+    Based on the user's status, access is granted or denied with appropriate messaging.
+  </Step>
+</Steps>
+
+## Implementation Details
+
+### Validation Use Case
+
+The institutional ID validation is implemented in `ValidateInstitutionalIdUseCase.js`:
+
+```javascript src/modules/login/domain/usecases/ValidateInstitutionalIdUseCase.js
+export class ValidateInstitutionalIdUseCase {
+  constructor(authRepository) {
+    this.authRepository = authRepository;
+  }
+
+  async execute(idInstitucional) {
+    // Validate format
+    if (!idInstitucional || idInstitucional.trim() === '') {
+      return {
+        success: false,
+        error: 'El ID institucional es requerido'
+      };
+    }
+
+    // Validate numeric format
+    if (!/^\d+$/.test(idInstitucional)) {
+      return {
+        success: false,
+        error: 'El ID institucional debe contener solo números'
+      };
+    }
+
+    // Look up user in database
+    const user = await this.authRepository.validateInstitutionalId(idInstitucional);
+
+    if (!user) {
+      return {
+        success: false,
+        error: 'ID institucional no encontrado'
+      };
+    }
+
+    // Check if user is blocked
+    if (user.isBlocked()) {
+      return {
+        success: false,
+        error: 'Tu acceso está bloqueado. Comunícate con la administración.'
+      };
+    }
+
+    return {
+      success: true,
+      user
+    };
+  }
+}
+```
+
+### Repository Implementation
+
+The authentication repository connects to Supabase (PostgreSQL) to validate credentials:
+
+```javascript src/modules/login/infrastructure/repositories/AuthRepositoryImpl.js
+export class AuthRepositoryImpl extends AuthRepository {
+  async validateInstitutionalId(idInstitucional) {
+    const { data, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('id_institucional', idInstitucional)
+      .single();
+
+    // User not found
+    if (error || !data) return null;
+
+    return new User({
+      id:                 data.id,
+      idInstitucional:    data.id_institucional,
+      documentoIdentidad: data.documento_identidad,
+      nombreCompleto:     data.nombre_completo,
+      acceso:             data.acceso,
+      totalFallas:        data.total_fallas,
+    });
+  }
+}
+```
+
+### User Entity
+
+The `User` entity includes helper methods to check user status:
+
+```javascript src/modules/login/domain/entities/User.js
+export class User {
+  constructor({
+    id,
+    idInstitucional,
+    documentoIdentidad,
+    nombreCompleto,
+    acceso,
+    totalFallas,
+    roles = []
+  }) {
+    this.id = id;
+    this.idInstitucional = idInstitucional;
+    this.documentoIdentidad = documentoIdentidad;
+    this.nombreCompleto = nombreCompleto;
+    this.acceso = acceso;
+    this.totalFallas = totalFallas;
+    this.roles = roles;
+  }
+
+  isBlocked() {
+    return this.acceso === 'bloqueado';
+  }
+
+  isAtRisk() {
+    return this.totalFallas >= 3;
+  }
+
+  getRemainingAttempts() {
+    return Math.max(0, 4 - this.totalFallas);
+  }
+}
+```
+
+## Database Schema
+
+The `usuarios` table stores all user authentication data:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | BIGINT | Internal system ID (primary key) |
+| `id_institucional` | VARCHAR(20) | Unique institutional ID (login credential) |
+| `documento_identidad` | VARCHAR(20) | National ID document |
+| `nombre_completo` | TEXT | Full name |
+| `acceso` | VARCHAR(10) | Access status: `activo` or `bloqueado` |
+| `total_fallas` | INT | Accumulated failure count |
+
+<Card title="Database Reference" icon="database" href="/database/schema">
+  View the complete database schema documentation
+</Card>
+
+## User States
+
+Users can be in one of two states:
+
+<CardGroup cols={2}>
+  <Card title="Active" icon="circle-check" color="#22C55E">
+    User has no restrictions and can report failures. Access is granted to the user profile screen.
+  </Card>
+  <Card title="Blocked" icon="ban" color="#EF4444">
+    User has exceeded the failure limit or reported loss/theft. Access is denied with a message to contact administration.
+  </Card>
+</CardGroup>
+
+## Error Messages
+
+The system provides clear, user-friendly error messages:
+
+- **Empty ID**: "El ID institucional es requerido"
+- **Invalid format**: "El ID institucional debe contener solo números"
+- **ID not found**: "ID institucional no encontrado"
+- **Account blocked**: "Tu acceso está bloqueado. Comunícate con la administración."
+
+## Security Considerations
+
+<Warning>
+This authentication method is intentionally simple because:
+- It's only used for contingency access tracking
+- Users must be physically present at the entrance
+- Security personnel verify user identity in person
+- All access attempts are logged in the audit system
+</Warning>
+
+## Related Features
+
+<CardGroup cols={2}>
+  <Card title="Multi-Role System" icon="users" href="/features/multi-role-system">
+    Learn how users can have multiple institutional roles
+  </Card>
+  <Card title="Automatic Blocking" icon="ban" href="/features/automatic-blocking">
+    Understand when and how accounts are automatically blocked
+  </Card>
+</CardGroup>

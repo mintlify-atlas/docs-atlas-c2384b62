@@ -1,0 +1,111 @@
+{
+  "projectType": "saas",
+  "projectName": "UCC Control de Acceso",
+  "projectDescription": "Sistema web para gestionar el ingreso contingente de usuarios sin carnet físico en la Universidad Cooperativa de Colombia",
+  "theme": "linden",
+  "primaryColor": "#003DA5",
+  "lightColor": "#4A7BBA",
+  "darkColor": "#002870",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/user-authentication",
+              "features/multi-role-system",
+              "features/failure-tracking",
+              "features/automatic-blocking"
+            ]
+          },
+          {
+            "group": "User Roles",
+            "pages": [
+              "roles/students",
+              "roles/employees",
+              "roles/contractors"
+            ]
+          },
+          {
+            "group": "Admin Guide",
+            "pages": [
+              "admin/dashboard",
+              "admin/user-management",
+              "admin/reports",
+              "admin/semester-management"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Database",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "database/schema",
+              "database/tables"
+            ]
+          },
+          {
+            "group": "Setup",
+            "pages": [
+              "database/installation",
+              "database/migrations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "development/architecture",
+              "development/clean-architecture",
+              "development/tech-stack"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "development/setup",
+              "development/frontend",
+              "development/backend",
+              "development/deployment"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Institutional ID-based authentication",
+    "Multi-role support (Student, Employee, Contractor)",
+    "Automated blocking system with failure tracking",
+    "Administrative dashboard with real-time metrics",
+    "Excel report generation and CSV bulk import",
+    "Semester-based data management",
+    "Supabase/PostgreSQL backend",
+    "Clean Architecture implementation"
+  ],
+  "publicApiSurface": [
+    "POST /api/auth/login - Validate institutional ID",
+    "GET /api/usuarios/:id - Get user information",
+    "POST /api/registro-falla - Register access without card",
+    "POST /api/admin/desbloquear - Unblock user",
+    "GET /api/admin/dashboard - Dashboard statistics",
+    "GET /api/admin/reportes/:tipo - Export reports",
+    "POST /api/admin/carga-csv - Bulk load data"
+  ]
+}
